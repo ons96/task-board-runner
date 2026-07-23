@@ -1,0 +1,242 @@
+name: Claim and Run Task
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # every 30 min
+  workflow_dispatch:
+    inputs:
+      scope_filter:
+        description: 'Comma-separated scopes to claim (default: cross-device,github-actions)'
+        required: false
+        default: 'cross-device,github-actions'
+      issue_number:
+        description: 'Specific issue number to claim (skips scope/priority filter)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: claim-and-run
+  cancel-in-progress: false  # don't cancel mid-work to avoid orphan lock labels
+
+jobs:
+  claim-and-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout runner repo (for claim-task.sh + runner-config.json)
+        uses: actions/checkout@v4
+        with:
+          path: runner
+
+      - name: Load runner config inline
+        id: cfg
+        run: |
+          # ponytail: inline-load the committed config content into step output for OPENCODE_CONFIG_CONTENT
+          CONTENT=$(cat runner/.github/runner-config.json)
+          {
+            echo "content<<CFG_EOF"
+            echo "$CONTENT"
+            echo "CFG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate gh CLI
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          # ponytail: use TASK_BOARD_PAT for cross-repo gh ops on task-board
+          echo "$GH_TOKEN" | gh auth login --with-token 2>/dev/null || true
+          gh auth status
+
+      - name: Claim task
+        id: claim
+        env:
+          TASK_BOARD_REPO: ons96/task-board
+          TASK_ALLOWED_SCOPES: ${{ github.event.inputs.scope_filter || 'cross-device,github-actions' }}
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          chmod +x runner/scripts/claim-task.sh
+          # Specific issue mode (--issue_number): claim it regardless of scope/priority
+          ISSUE_NUM="${{ github.event.inputs.issue_number }}"
+          if [ -n "$ISSUE_NUM" ]; then
+            WORKER_ID="gha-${GITHUB_RUN_ID}"
+            LOCK_LABEL="locked-by:${WORKER_ID}"
+            gh label create "$LOCK_LABEL" -R "$TASK_BOARD_REPO" --color "BFD4F2" 2>/dev/null || true
+            gh issue edit "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
+              --add-label "status:in_progress" \
+              --add-label "$LOCK_LABEL" \
+              --remove-label "status:new" 2>/dev/null || true
+            sleep 2
+            CURRENT_LOCK=$(gh issue view "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
+              --json labels --jq '.labels[] | select(.name | startswith("locked-by:")) | .name' 2>/dev/null || echo "")
+            if [ "$CURRENT_LOCK" != "$LOCK_LABEL" ]; then
+              echo "Issue #$ISSUE_NUM already claimed by $CURRENT_LOCK, aborting"
+              exit 0
+            fi
+            ROW=$(gh issue view "$ISSUE_NUM" -R "$TASK_BOARD_REPO" --json number,title,labels,body)
+          else
+            # Normal priority-scan claim mode
+            ROW=$(bash runner/scripts/claim-task.sh --worker "gha-${GITHUB_RUN_ID}" --scope "$TASK_ALLOWED_SCOPES" 2>&1) || true
+          fi
+
+          if [ -z "$ROW" ] || [ "$ROW" = "" ]; then
+            echo "No claimable tasks. Exiting."
+            echo "has_task=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "$ROW" | jq -e '.number' >/dev/null 2>&1 || {
+            echo "Claim output not JSON: $ROW"
+            echo "has_task=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          echo "has_task=true" >> "$GITHUB_OUTPUT"
+          echo "issue_number=$(echo "$ROW" | jq -r '.number')" >> "$GITHUB_OUTPUT"
+          echo "issue_title=$(echo "$ROW" | jq -r '.title')" >> "$GITHUB_OUTPUT"
+          echo "issue_body<<BODY_EOF" >> "$GITHUB_OUTPUT"
+          echo "$ROW" | jq -r '.body // ""' >> "$GITHUB_OUTPUT"
+          echo "BODY_EOF" >> "$GITHUB_OUTPUT"
+          echo "project=$(echo "$ROW" | jq -r '.project // "general"')" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout target repo
+        if: steps.claim.outputs.has_task == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: 'ons96/${{ steps.claim.outputs.project }}'
+          ref: 'main'
+          token: ${{ secrets.TASK_BOARD_PAT }}
+          fetch-depth: 0
+          path: workspace
+
+      - name: Create work branch
+        if: steps.claim.outputs.has_task == 'true'
+        working-directory: workspace
+        run: |
+          # ponytail: work/<num> naming matches task-board-loop convention
+          git checkout -b "work/${{ steps.claim.outputs.issue_number }}"
+
+      - name: Install opencode
+        if: steps.claim.outputs.has_task == 'true'
+        run: |
+          curl -fsSL https://opencode.ai/install | bash
+          echo "$HOME/.local/bin/opencode" >> "$GITHUB_PATH"
+          # Verify
+          opencode --version || true
+
+      - name: Run opencode on claimed issue
+        if: steps.claim.outputs.has_task == 'true'
+        working-directory: workspace
+        timeout-minutes: 20
+        env:
+          OPENCODE_CONFIG_CONTENT: ${{ steps.cfg.outputs.content }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENCODE_DISABLE_DEFAULT_PLUGINS: '1'
+          OPENCODE_DISABLE_EXTERNAL_SKILLS: '1'
+          OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1'
+        run: |
+          # ponytail: --pure strips external plugins, OPENCODE_CONFIG_* disables MCPs we don't have secrets for
+          # Build issue-driven prompt
+          PROMPT="You are an autonomous coding agent. Issue #${{ steps.claim.outputs.issue_number }} from the task board: ${{ steps.claim.outputs.issue_title }}
+
+          Issue body:
+          ${{ steps.claim.outputs.issue_body }}
+
+          Implement the requested work in this repo. Follow existing conventions. Commit changes via git. Keep diffs minimal. Do NOT push or open a PR — the workflow pushes and opens the PR."
+
+          opencode --print --pure "$PROMPT" 2>&1 | tee ../agent-output.txt || true
+
+      - name: Check for changes
+        if: steps.claim.outputs.has_task == 'true'
+        id: changes
+        working-directory: workspace
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            git add -A
+            git commit -m "feat(#${{ steps.claim.outputs.issue_number }}): agent implementation for ${{ steps.claim.outputs.issue_title }}"
+          fi
+
+      - name: Push and create PR
+        if: steps.claim.outputs.has_task == 'true' && steps.changes.outputs.has_changes == 'true'
+        id: pr
+        working-directory: workspace
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          git push "https://x-access-token:${GH_TOKEN}@github.com/ons96/${{ steps.claim.outputs.project }}.git" "work/${{ steps.claim.outputs.issue_number }}"
+
+          PR_URL=$(gh pr create \
+            --repo "ons96/${{ steps.claim.outputs.project }}" \
+            --title "[#${{ steps.claim.outputs.issue_number }}] Agent work: ${{ steps.claim.outputs.issue_title }}" \
+            --body "Automated implementation by task-board-runner (run ${{ github.run_id }}).
+
+          Closes #${{ steps.claim.outputs.issue_number }} on merge.
+
+          Source: [task-board issue](https://github.com/ons96/task-board/issues/${{ steps.claim.outputs.issue_number }})" \
+            --base main \
+            --head "work/${{ steps.claim.outputs.issue_number }}" \
+            --draft 2>&1) || true
+
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Mark task done (+ link PR)
+        if: steps.claim.outputs.has_task == 'true' && steps.changes.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          gh issue edit "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
+            --remove-label "status:in_progress" \
+            --add-label "status:done" \
+            --remove-label "locked-by:gha-${{ github.run_id }}" || true
+          if [ -n "${{ steps.pr.outputs.pr_url }}" ]; then
+            gh issue comment "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
+              --body "Merged/opened PR: ${{ steps.pr.outputs.pr_url }}" || true
+          fi
+          gh issue close "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board || true
+
+      - name: Release task (no changes / failure path)
+        if: steps.claim.outputs.has_task == 'true' && steps.changes.outputs.has_changes != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          # ponytail: no changes = work either done in progress or actually no work. Mark done.
+          gh issue edit "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
+            --remove-label "status:in_progress" \
+            --add-label "status:done" \
+            --remove-label "locked-by:gha-${{ github.run_id }}" || true
+          gh issue close "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board || true
+
+      - name: Release task (failure path)
+        if: failure() && steps.claim.outputs.has_task == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          # ponytail: revert to status:new + clear lock so other workers can claim. Stale label stays off.
+          gh issue edit "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
+            --remove-label "status:in_progress" \
+            --remove-label "locked-by:gha-${{ github.run_id }}" 2>/dev/null || true
+          gh issue edit "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
+            --add-label "status:new" 2>/dev/null || true
+          gh issue comment "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
+            --body "Released by gha-${{ github.run_id }} after workflow failure. Re-queued for retry." 2>/dev/null || true
+
+      - name: Upload agent output artifact
+        if: always() && steps.claim.outputs.has_task == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-output-${{ steps.claim.outputs.issue_number }}
+          path: |
+            agent-output.txt
+            workspace/.git/HEAD
+          retention-days: 7
+          if-no-files-found: ignore
