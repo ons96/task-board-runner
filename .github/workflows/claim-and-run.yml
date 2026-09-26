@@ -152,7 +152,12 @@ jobs:
 
           Implement the requested work in this repo. Follow existing conventions. Commit changes via git. Keep diffs minimal. Do NOT push or open a PR — the workflow pushes and opens the PR."
 
-          opencode --print --pure "$PROMPT" 2>&1 | tee ../agent-output.txt || true
+          opencode run --pure --model nvidia/z-ai/glm-5.3 "$PROMPT" 2>&1 | tee ../agent-output.txt || true
+          # ponytail: CLI-misuse gate — help text means zero agent work, fail so issue requeues
+          if grep -qE '^  opencode (run|attach|serve) ' ../agent-output.txt; then
+            echo "ERROR: opencode printed CLI help instead of running. Failing to requeue."
+            exit 1
+          fi
 
       - name: Check for changes
         if: steps.claim.outputs.has_task == 'true'
@@ -210,12 +215,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
         run: |
-          # ponytail: no changes = work either done in progress or actually no work. Mark done.
+          # ponytail: no changes = agent did nothing. Requeue as new, never mark done.
           gh issue edit "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
             --remove-label "status:in_progress" \
-            --add-label "status:done" \
+            --add-label "status:new" \
             --remove-label "locked-by:gha-${{ github.run_id }}" || true
-          gh issue close "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board || true
+          gh issue comment "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
+            --body "Runner run ${{ github.run_id }} produced no commits — re-queued as status:new for retry." || true
 
       - name: Release task (failure path)
         if: failure() && steps.claim.outputs.has_task == 'true'
