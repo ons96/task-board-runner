@@ -131,7 +131,7 @@ jobs:
       - name: Run opencode on claimed issue
         if: steps.claim.outputs.has_task == 'true'
         working-directory: workspace
-        timeout-minutes: 20
+        timeout-minutes: 28
         env:
           OPENCODE_CONFIG_CONTENT: ${{ steps.cfg.outputs.content }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
