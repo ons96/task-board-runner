@@ -80,7 +80,8 @@ jobs:
             ROW=$(gh issue view "$ISSUE_NUM" -R "$TASK_BOARD_REPO" --json number,title,labels,body)
           else
             # Normal priority-scan claim mode
-            ROW=$(bash runner/scripts/claim-task.sh --worker "gha-${GITHUB_RUN_ID}" --scope "$TASK_ALLOWED_SCOPES" 2>&1) || true
+            # ponytail: claim-task.sh contract = single JSON line on stdout; grep drops stray non-JSON lines so a real claim can't false-negative into has_task=false
+            ROW=$(bash runner/scripts/claim-task.sh --worker "gha-${GITHUB_RUN_ID}" --scope "$TASK_ALLOWED_SCOPES" 2>/dev/null | grep -E '^\{') || true
           fi
 
           if [ -z "$ROW" ] || [ "$ROW" = "" ]; then
@@ -101,7 +102,8 @@ jobs:
           echo "issue_body<<BODY_EOF" >> "$GITHUB_OUTPUT"
           echo "$ROW" | jq -r '.body // ""' >> "$GITHUB_OUTPUT"
           echo "BODY_EOF" >> "$GITHUB_OUTPUT"
-          echo "project=$(echo "$ROW" | jq -r '.project // "general"')" >> "$GITHUB_OUTPUT"
+          # ponytail: direct issue_number ROW lacks .project; derive from project:* label so we clone the right repo (was: defaulted to ons96/general)
+          echo "project=$(echo "$ROW" | jq -r '.project // ([.labels[].name | select(startswith("project:")) | sub("^project:";"")] | .[0] // "general")')" >> "$GITHUB_OUTPUT"
 
       - name: Checkout target repo
         if: steps.claim.outputs.has_task == 'true'
@@ -124,6 +126,9 @@ jobs:
           else
             git checkout -b "work/${{ steps.claim.outputs.issue_number }}"
           fi
+          # ponytail: GH runners ship no git identity; without this every git commit (agent, check-for-changes, salvage) fails with "Author identity unknown"
+          git config user.name "task-board-runner"
+          git config user.email "task-board-runner@users.noreply.github.com"
 
       - name: Install opencode
         if: steps.claim.outputs.has_task == 'true'
@@ -223,13 +228,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
         run: |
-          # ponytail: timeouts kill the agent mid-sweep; bank whatever exists so the next run resumes from work/<num>
+          # ponytail: timeouts kill the agent mid-sweep; bank unstaged edits AND agent-committed-but-unpushed work so the next run resumes from work/<num>
           git add -A
           if git diff --cached --quiet; then
-            echo "No partial changes to salvage."
-            exit 0
+            echo "No new uncommitted changes to salvage."
+          else
+            git commit -m "wip(#${{ steps.claim.outputs.issue_number }}): partial progress, run ${{ github.run_id }}" || true
           fi
-          git commit -m "wip(#${{ steps.claim.outputs.issue_number }}): partial progress, run ${{ github.run_id }}" || true
+          # ponytail: push unconditionally — the agent may have committed but never pushed before the timeout killed it
           git push "https://x-access-token:${GH_TOKEN}@github.com/ons96/${{ steps.claim.outputs.project }}.git" "work/${{ steps.claim.outputs.issue_number }}" || true
 
       - name: Release task (no changes / failure path)

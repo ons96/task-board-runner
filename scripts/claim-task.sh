@@ -83,12 +83,12 @@ for prio_label in "${PRIORITY_ORDER[@]}"; do
 
     LOCK_LABEL="locked-by:${WORKER_ID}"
 
-    gh label create "$LOCK_LABEL" -R "$TASK_BOARD_REPO" --color "BFD4F2" 2>/dev/null || true
+    gh label create "$LOCK_LABEL" -R "$TASK_BOARD_REPO" --color "BFD4F2" >/dev/null 2>&1 || true
 
     gh issue edit "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
       --add-label "status:in_progress" \
       --add-label "$LOCK_LABEL" \
-      --remove-label "status:new" 2>/dev/null || continue
+      --remove-label "status:new" >/dev/null 2>&1 || continue
 
     sleep 2
 
