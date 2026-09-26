@@ -26,7 +26,7 @@ concurrency:
 jobs:
   claim-and-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout runner repo (for claim-task.sh + runner-config.json)
         uses: actions/checkout@v4
@@ -117,8 +117,13 @@ jobs:
         if: steps.claim.outputs.has_task == 'true'
         working-directory: workspace
         run: |
-          # ponytail: work/<num> naming matches task-board-loop convention
-          git checkout -b "work/${{ steps.claim.outputs.issue_number }}"
+          # ponytail: work/<num> naming matches task-board-loop convention; resume partial branch if a prior run salvaged one
+          git fetch origin "work/${{ steps.claim.outputs.issue_number }}" 2>/dev/null || true
+          if git rev-parse --verify "origin/work/${{ steps.claim.outputs.issue_number }}" >/dev/null 2>&1; then
+            git checkout -B "work/${{ steps.claim.outputs.issue_number }}" "origin/work/${{ steps.claim.outputs.issue_number }}"
+          else
+            git checkout -b "work/${{ steps.claim.outputs.issue_number }}"
+          fi
 
       - name: Install opencode
         if: steps.claim.outputs.has_task == 'true'
@@ -131,7 +136,7 @@ jobs:
       - name: Run opencode on claimed issue
         if: steps.claim.outputs.has_task == 'true'
         working-directory: workspace
-        timeout-minutes: 28
+        timeout-minutes: 40
         env:
           OPENCODE_CONFIG_CONTENT: ${{ steps.cfg.outputs.content }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -150,7 +155,9 @@ jobs:
           Issue body:
           ${{ steps.claim.outputs.issue_body }}
 
-          Implement the requested work in this repo. Follow existing conventions. Commit changes via git. Keep diffs minimal. Do NOT push or open a PR — the workflow pushes and opens the PR."
+          Implement the requested work in this repo. Follow existing conventions. Keep diffs minimal. Do NOT push or open a PR — the workflow pushes and opens the PR.
+          Work in branch work/${{ steps.claim.outputs.issue_number }} and continue from any partial commits already on it.
+          Commit incrementally (git add -A && git commit) every ~10 minutes or per completed unit, so partial progress survives step timeouts."
 
           opencode run --pure --model nvidia/z-ai/glm-5.3 "$PROMPT" 2>&1 | tee ../agent-output.txt || true
           # ponytail: CLI-misuse gate — help text means zero agent work, fail so issue requeues
@@ -210,8 +217,23 @@ jobs:
           fi
           gh issue close "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board || true
 
+      - name: Salvage partial work (failure/timeout path)
+        if: failure() && steps.claim.outputs.has_task == 'true'
+        working-directory: workspace
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          # ponytail: timeouts kill the agent mid-sweep; bank whatever exists so the next run resumes from work/<num>
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No partial changes to salvage."
+            exit 0
+          fi
+          git commit -m "wip(#${{ steps.claim.outputs.issue_number }}): partial progress, run ${{ github.run_id }}" || true
+          git push "https://x-access-token:${GH_TOKEN}@github.com/ons96/${{ steps.claim.outputs.project }}.git" "work/${{ steps.claim.outputs.issue_number }}" || true
+
       - name: Release task (no changes / failure path)
-        if: steps.claim.outputs.has_task == 'true' && steps.changes.outputs.has_changes != 'true'
+        if: success() && steps.claim.outputs.has_task == 'true' && steps.changes.outputs.has_changes != 'true'
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
         run: |
@@ -235,7 +257,7 @@ jobs:
           gh issue edit "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
             --add-label "status:new" 2>/dev/null || true
           gh issue comment "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
-            --body "Released by gha-${{ github.run_id }} after workflow failure. Re-queued for retry." 2>/dev/null || true
+            --body "Released by gha-${{ github.run_id }} after workflow failure. Re-queued for retry. Partial progress (if any) was pushed to work/${{ steps.claim.outputs.issue_number }} — the next run resumes from it." 2>/dev/null || true
 
       - name: Upload agent output artifact
         if: always() && steps.claim.outputs.has_task == 'true'
