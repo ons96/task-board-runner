@@ -52,6 +52,36 @@ jobs:
           echo "$GH_TOKEN" | gh auth login --with-token 2>/dev/null || true
           gh auth status
 
+      - name: Sweep stale gha-* locks (orphan recovery)
+        env:
+          TASK_BOARD_REPO: ons96/task-board
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          # ponytail: concurrency group = only one run executes at a time; any gha-* lock
+          # older than 10 min at run start is definitively orphaned (holder job <=45min,
+          # clean ends release their own locks). Non-gha worker locks are never touched.
+          NOW=$(date +%s)
+          STALE=$(gh issue list -R "$TASK_BOARD_REPO" --state open --label "status:in_progress" --limit 100 \
+            --json number,updatedAt,labels \
+            --jq '.[] | select(any(.labels[]; (.name | startswith("locked-by:gha-")))) | "\(.number) \(.updatedAt)"' 2>/dev/null || true)
+          echo "$STALE" | while read -r NUM UPDATED_AT; do
+            [ -n "$NUM" ] || continue
+            AGE_SEC=$(date -u -d "$UPDATED_AT" +%s) || continue
+            AGE=$(( NOW - AGE_SEC ))
+            if [ "$AGE" -gt 600 ]; then
+              LOCK=$(gh issue view "$NUM" -R "$TASK_BOARD_REPO" --json labels \
+                --jq '[.labels[].name | select(startswith("locked-by:gha-"))] | .[0]' 2>/dev/null || echo "")
+              [ -n "$LOCK" ] || continue
+              gh issue edit "$NUM" -R "$TASK_BOARD_REPO" \
+                --remove-label "status:in_progress" \
+                --add-label "status:new" \
+                --remove-label "$LOCK" 2>/dev/null || true
+              gh issue comment "$NUM" -R "$TASK_BOARD_REPO" \
+                --body "Sweeper: released stale lock \`${LOCK}\` (age ${AGE}s > 600s; the holding run has ended). Re-queued as status:new." 2>/dev/null || true
+              echo "Swept orphan lock on #$NUM ($LOCK, age ${AGE}s)"
+            fi
+          done
+
       - name: Claim task
         id: claim
         env:
@@ -60,11 +90,23 @@ jobs:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
         run: |
           chmod +x runner/scripts/claim-task.sh
+          WORKER_ID="gha-${GITHUB_RUN_ID}"
+          LOCK_LABEL="locked-by:${WORKER_ID}"
+          # ponytail: claim-then-parse-failure must never orphan the claim — find anything wearing OUR lock and free it
+          release_own_lock() {
+            OWNED_LIST=$(gh issue list -R "$TASK_BOARD_REPO" --state open --label "$LOCK_LABEL" --json number --jq '.[].number' 2>/dev/null || true)
+            for OWNED in $OWNED_LIST; do
+              gh issue edit "$OWNED" -R "$TASK_BOARD_REPO" \
+                --remove-label "status:in_progress" \
+                --add-label "status:new" \
+                --remove-label "$LOCK_LABEL" 2>/dev/null || true
+              gh issue comment "$OWNED" -R "$TASK_BOARD_REPO" \
+                --body "Released by ${WORKER_ID}: claimed but task data could not be read/parsed — re-queued immediately." 2>/dev/null || true
+            done
+          }
           # Specific issue mode (--issue_number): claim it regardless of scope/priority
           ISSUE_NUM="${{ github.event.inputs.issue_number }}"
           if [ -n "$ISSUE_NUM" ]; then
-            WORKER_ID="gha-${GITHUB_RUN_ID}"
-            LOCK_LABEL="locked-by:${WORKER_ID}"
             gh label create "$LOCK_LABEL" -R "$TASK_BOARD_REPO" --color "BFD4F2" 2>/dev/null || true
             gh issue edit "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
               --add-label "status:in_progress" \
@@ -86,12 +128,14 @@ jobs:
 
           if [ -z "$ROW" ] || [ "$ROW" = "" ]; then
             echo "No claimable tasks. Exiting."
+            release_own_lock
             echo "has_task=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           echo "$ROW" | jq -e '.number' >/dev/null 2>&1 || {
             echo "Claim output not JSON: $ROW"
+            release_own_lock
             echo "has_task=false" >> "$GITHUB_OUTPUT"
             exit 0
           }
@@ -270,6 +314,19 @@ jobs:
             --add-label "status:new" 2>/dev/null || true
           gh issue comment "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
             --body "Released by gha-${{ github.run_id }} after workflow failure. Re-queued for retry. Partial progress (if any) was pushed to work/${{ steps.claim.outputs.issue_number }} — the next run resumes from it." 2>/dev/null || true
+
+      - name: Release task (cancellation path)
+        if: cancelled() && steps.claim.outputs.has_task == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          # ponytail: manual cancel + job-level timeout kills skip failure() steps; free the lock best-effort in the grace window
+          gh issue edit "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
+            --remove-label "status:in_progress" \
+            --add-label "status:new" \
+            --remove-label "locked-by:gha-${{ github.run_id }}" 2>/dev/null || true
+          gh issue comment "${{ steps.claim.outputs.issue_number }}" -R ons96/task-board \
+            --body "Released by gha-${{ github.run_id }} after cancellation. Unpushed work may be lost; pushed work resumes from work/${{ steps.claim.outputs.issue_number }} on next claim." 2>/dev/null || true
 
       - name: Upload agent output artifact
         if: always() && steps.claim.outputs.has_task == 'true'
