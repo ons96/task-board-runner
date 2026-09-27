@@ -1,0 +1,205 @@
+name: Run Task Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Task-board issue number
+        required: true
+        type: string
+      project:
+        description: Target repository name under ons96
+        required: true
+        type: string
+      lock_label:
+        description: Lock label created by the dispatcher
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: task-${{ inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout runner config
+        uses: actions/checkout@v4
+        with:
+          path: runner
+
+      - name: Load runner config
+        id: cfg
+        run: |
+          CONTENT=$(cat runner/.github/runner-config.json)
+          {
+            echo "content<<CFG_EOF"
+            echo "$CONTENT"
+            echo "CFG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate gh CLI
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          echo "$GH_TOKEN" | gh auth login --with-token 2>/dev/null || true
+          gh auth status
+
+      - name: Read task
+        id: task
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+          TASK_BOARD_REPO: ons96/task-board
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          ROW=$(gh issue view "$ISSUE_NUMBER" -R "$TASK_BOARD_REPO" --json number,title,body)
+          echo "title=$(echo "$ROW" | jq -r '.title')" >> "$GITHUB_OUTPUT"
+          echo "body<<BODY_EOF" >> "$GITHUB_OUTPUT"
+          echo "$ROW" | jq -r '.body // ""' >> "$GITHUB_OUTPUT"
+          echo "BODY_EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          repository: ons96/${{ inputs.project }}
+          ref: main
+          token: ${{ secrets.TASK_BOARD_PAT }}
+          fetch-depth: 0
+          path: workspace
+
+      - name: Create work branch
+        working-directory: workspace
+        run: |
+          git fetch origin "work/${{ inputs.issue_number }}" 2>/dev/null || true
+          if git rev-parse --verify "origin/work/${{ inputs.issue_number }}" >/dev/null 2>&1; then
+            git checkout -B "work/${{ inputs.issue_number }}" "origin/work/${{ inputs.issue_number }}"
+          else
+            git checkout -b "work/${{ inputs.issue_number }}"
+          fi
+          git config user.name "task-board-runner"
+          git config user.email "task-board-runner@users.noreply.github.com"
+
+      - name: Install opencode
+        run: |
+          curl -fsSL https://opencode.ai/install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          opencode --version || true
+
+      - name: Run opencode on claimed issue
+        working-directory: workspace
+        timeout-minutes: 40
+        env:
+          OPENCODE_CONFIG_CONTENT: ${{ steps.cfg.outputs.content }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          KIOSAPI_API_KEY: ${{ secrets.KIOSAPI_API_KEY }}
+          SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENCODE_DISABLE_DEFAULT_PLUGINS: '1'
+          OPENCODE_DISABLE_EXTERNAL_SKILLS: '1'
+          OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1'
+        run: |
+          PROMPT="You are an autonomous coding agent. Issue #${{ inputs.issue_number }} from the task board: ${{ steps.task.outputs.title }}
+
+          Issue body:
+          ${{ steps.task.outputs.body }}
+
+          Implement the requested work in this repo. Follow existing conventions. Keep diffs minimal. Do NOT push or open a PR — the workflow pushes and opens the PR.
+          Work in branch work/${{ inputs.issue_number }} and continue from any partial commits already on it.
+          Commit incrementally (git add -A && git commit) every ~10 minutes or per completed unit, so partial progress survives step timeouts."
+          opencode run --pure --model nvidia/z-ai/glm-5.3 "$PROMPT" 2>&1 | tee ../agent-output.txt || true
+          if grep -qE '^  opencode (run|attach|serve) ' ../agent-output.txt; then
+            echo "ERROR: opencode printed CLI help instead of running."
+            exit 1
+          fi
+
+      - name: Check for changes
+        id: changes
+        working-directory: workspace
+        run: |
+          AHEAD=0
+          if git rev-parse --verify "origin/work/${{ inputs.issue_number }}" >/dev/null 2>&1; then
+            AHEAD=$(git rev-list --count "origin/work/${{ inputs.issue_number }}..HEAD" 2>/dev/null || echo 0)
+          fi
+          if git diff --quiet && git diff --cached --quiet && [ "$AHEAD" = "0" ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            git add -A
+            git diff --cached --quiet || git commit -m "feat(#${{ inputs.issue_number }}): agent implementation for ${{ steps.task.outputs.title }}"
+          fi
+
+      - name: Push and create PR
+        if: steps.changes.outputs.has_changes == 'true'
+        id: pr
+        working-directory: workspace
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          git push "https://x-access-token:${GH_TOKEN}@github.com/ons96/${{ inputs.project }}.git" \
+            "work/${{ inputs.issue_number }}"
+          PR_URL=$(gh pr create --repo "ons96/${{ inputs.project }}" \
+            --title "[#${{ inputs.issue_number }}] Agent work: ${{ steps.task.outputs.title }}" \
+            --body "Automated implementation by task-board-runner (run ${{ github.run_id }})." \
+            --base main --head "work/${{ inputs.issue_number }}" --draft 2>&1) || true
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Mark task done
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          LOCK_LABEL: ${{ inputs.lock_label }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
+            --remove-label status:in_progress --add-label status:done \
+            --remove-label "$LOCK_LABEL" || true
+          if [ -n "${{ steps.pr.outputs.pr_url }}" ]; then
+            gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
+              --body "Opened PR: ${{ steps.pr.outputs.pr_url }}" || true
+          fi
+          gh issue close "$ISSUE_NUMBER" -R ons96/task-board || true
+
+      - name: Salvage partial work
+        if: failure()
+        working-directory: workspace
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          git add -A
+          git diff --cached --quiet || git commit -m "wip(#${{ inputs.issue_number }}): partial progress, run ${{ github.run_id }}" || true
+          git push "https://x-access-token:${GH_TOKEN}@github.com/ons96/${{ inputs.project }}.git" \
+            "work/${{ inputs.issue_number }}" || true
+
+      - name: Release task
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          LOCK_LABEL: ${{ inputs.lock_label }}
+        run: |
+          if [ "${{ steps.changes.outputs.has_changes || 'false' }}" = "true" ] && [ "${{ job.status }}" = "success" ]; then
+            exit 0
+          fi
+          gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
+            --remove-label status:in_progress --add-label status:new \
+            --remove-label "$LOCK_LABEL" 2>/dev/null || true
+          gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
+            --body "Worker ${{ github.run_id }} released the task after failure or no changes; re-queued for retry." \
+            2>/dev/null || true
+
+      - name: Upload agent output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-output-${{ inputs.issue_number }}-${{ github.run_id }}
+          path: |
+            agent-output.txt
+            workspace/.git/HEAD
+          retention-days: 7
+          if-no-files-found: ignore
