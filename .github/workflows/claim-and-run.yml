@@ -176,12 +176,18 @@ jobs:
         id: changes
         working-directory: workspace
         run: |
-          if git diff --quiet && git diff --cached --quiet; then
+          # ponytail: the agent commits incrementally per its prompt, so a clean tree can still hide committed-but-unpushed work — diff against origin/work/<num> too
+          AHEAD=0
+          if git rev-parse --verify "origin/work/${{ steps.claim.outputs.issue_number }}" >/dev/null 2>&1; then
+            AHEAD=$(git rev-list --count "origin/work/${{ steps.claim.outputs.issue_number }}..HEAD" 2>/dev/null || echo 0)
+          fi
+          if git diff --quiet && git diff --cached --quiet && [ "$AHEAD" = "0" ]; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
             git add -A
-            git commit -m "feat(#${{ steps.claim.outputs.issue_number }}): agent implementation for ${{ steps.claim.outputs.issue_title }}"
+            # ponytail: commit only if something is staged — the agent may have committed everything already
+            git diff --cached --quiet || git commit -m "feat(#${{ steps.claim.outputs.issue_number }}): agent implementation for ${{ steps.claim.outputs.issue_title }}"
           fi
 
       - name: Push and create PR
