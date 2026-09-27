@@ -43,6 +43,17 @@ jobs:
             echo "CFG_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Validate runner config
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          KIOSAPI_API_KEY: ${{ secrets.KIOSAPI_API_KEY }}
+          SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+        run: |
+          bash runner/scripts/validate-runner-config.sh \
+            runner/.github/runner-config.json --check-model
+
       - name: Authenticate gh CLI
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
