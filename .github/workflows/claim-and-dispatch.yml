@@ -1,0 +1,106 @@
+name: Claim and Dispatch Tasks
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      scope_filter:
+        description: Comma-separated scopes to claim
+        required: false
+        default: cross-device,github-actions
+      max_tasks:
+        description: Maximum tasks to dispatch this run
+        required: false
+        default: '4'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claim-and-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout runner
+        uses: actions/checkout@v4
+        with:
+          path: runner
+
+      - name: Authenticate gh CLI
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          echo "$GH_TOKEN" | gh auth login --with-token 2>/dev/null || true
+          gh auth status
+
+      - name: Sweep stale worker locks
+        env:
+          TASK_BOARD_REPO: ons96/task-board
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+        run: |
+          NOW=$(date +%s)
+          STALE=$(gh issue list -R "$TASK_BOARD_REPO" --state open --label "status:in_progress" --limit 100 \
+            --json number,updatedAt,labels \
+            --jq '.[] | select(any(.labels[]; (.name | startswith("locked-by:gha-")))) | "\(.number) \(.updatedAt)"' 2>/dev/null || true)
+          echo "$STALE" | while read -r NUM UPDATED_AT; do
+            [ -n "$NUM" ] || continue
+            AGE=$(( NOW - $(date -u -d "$UPDATED_AT" +%s) ))
+            # Worker jobs can run for 45 minutes; 1 hour avoids releasing live work.
+            if [ "$AGE" -gt 3600 ]; then
+              LOCK=$(gh issue view "$NUM" -R "$TASK_BOARD_REPO" --json labels \
+                --jq '[.labels[].name | select(startswith("locked-by:gha-"))] | .[0]' 2>/dev/null || true)
+              [ -n "$LOCK" ] || continue
+              gh issue edit "$NUM" -R "$TASK_BOARD_REPO" \
+                --remove-label "status:in_progress" --add-label "status:new" \
+                --remove-label "$LOCK" >/dev/null 2>&1 || true
+              gh issue comment "$NUM" -R "$TASK_BOARD_REPO" \
+                --body "Sweeper released stale lock \`${LOCK}\` (age ${AGE}s). Re-queued as status:new." \
+                >/dev/null 2>&1 || true
+            fi
+          done
+
+      - name: Claim and dispatch workers
+        env:
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+          TASK_BOARD_REPO: ons96/task-board
+          TASK_ALLOWED_SCOPES: ${{ github.event.inputs.scope_filter || 'cross-device,github-actions' }}
+          MAX_TASKS: ${{ github.event.inputs.max_tasks || '4' }}
+        run: |
+          set -euo pipefail
+          MAX_TASKS=$((MAX_TASKS + 0))
+          [ "$MAX_TASKS" -gt 0 ] || exit 0
+          [ "$MAX_TASKS" -le 8 ] || MAX_TASKS=8
+          dispatched=0
+          for index in $(seq 1 "$MAX_TASKS"); do
+            WORKER_ID="gha-${GITHUB_RUN_ID}-${index}"
+            ROW=$(bash runner/scripts/claim-task.sh \
+              --worker "$WORKER_ID" --scope "$TASK_ALLOWED_SCOPES" 2>/dev/null | grep -E '^\{' || true)
+            if [ -z "$ROW" ]; then
+              echo "No more claimable tasks after $dispatched dispatches."
+              break
+            fi
+            echo "$ROW" | jq -e '.number and .project' >/dev/null
+            ISSUE_NUM=$(echo "$ROW" | jq -r '.number')
+            PROJECT=$(echo "$ROW" | jq -r '.project')
+            LOCK_LABEL="locked-by:${WORKER_ID}"
+            if gh workflow run task-worker.yml -R ons96/task-board-runner \
+              -f issue_number="$ISSUE_NUM" -f project="$PROJECT" -f lock_label="$LOCK_LABEL"; then
+              gh issue comment "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
+                --body "Dispatched worker for ${PROJECT} (dispatcher ${GITHUB_RUN_ID})." \
+                >/dev/null 2>&1 || true
+              dispatched=$((dispatched + 1))
+            else
+              gh issue edit "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
+                --remove-label "status:in_progress" --add-label "status:new" \
+                --remove-label "$LOCK_LABEL" >/dev/null 2>&1 || true
+              gh issue comment "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
+                --body "Dispatcher failed to start worker; re-queued as status:new." \
+                >/dev/null 2>&1 || true
+            fi
+          done
+          echo "Dispatched $dispatched worker(s)."

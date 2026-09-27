@@ -8,11 +8,11 @@ Private repos get 2000 Actions minutes/month; public repos get unlimited. The ru
 
 ## How it works
 
-1. Cron schedule `*/30 * * * *` fires the `claim-and-run` workflow.
-2. Workflow runs `claim-task.sh` (copied from `task-board/scripts/`) with `--worker gha-$GITHUB_RUN_ID --scope github-actions,cross-device`.
-3. If no claimable issue → exit 0 (no PR, no minutes wasted).
-4. If claimed: clone target repo on a work branch `work/$ISSUE_NUM`, install opencode + minimal config, run `opencode --print "..."` against the issue body, push the branch, open a draft PR.
-5. Issue labels flip to `status:in_progress` + `locked-by:gha-$RUN_ID`. Watchdog on `task-board` frees stale claims after 30 min.
+1. Cron schedule `*/30 * * * *` fires `claim-and-dispatch`.
+2. The short dispatcher claims up to four issues with `claim-task.sh` and starts one `task-worker` run per issue.
+3. Workers run concurrently across different issues, with `task-$ISSUE_NUM` concurrency preventing duplicate workers for one issue.
+4. Each worker clones the target repo on `work/$ISSUE_NUM`, runs opencode, pushes the branch, and opens a draft PR.
+5. Issue locks survive dispatcher exit; workers release them on success, failure, or no-change paths.
 
 ## LLM providers used
 
@@ -25,8 +25,9 @@ Runner cannot reach the VPS-40 gateway (Tailscale-only) so it uses free DIRECT p
 
 API keys live as GitHub Secrets in THIS repo:
 
-- `GROQ_API_KEY`
-- `CEREBRAS_API_KEY`
+- `NVIDIA_API_KEY`
+- `KIOSAPI_API_KEY`
+- `SILICONFLOW_API_KEY`
 - `MISTRAL_API_KEY`
 - `TOGETHER_API_KEY`
 - `TASK_BOARD_PAT` — fine-grained PAT with `repo` scope on `ons96/task-board` (used by `gh` CLI for claim/push). The default `GITHUB_TOKEN` cannot act on other repos.
