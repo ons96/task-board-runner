@@ -72,17 +72,20 @@ jobs:
           fetch-depth: 0
           path: workspace
 
-      - name: Create work branch
-        working-directory: workspace
-        run: |
-          git fetch origin "work/${{ inputs.issue_number }}" 2>/dev/null || true
-          if git rev-parse --verify "origin/work/${{ inputs.issue_number }}" >/dev/null 2>&1; then
-            git checkout -B "work/${{ inputs.issue_number }}" "origin/work/${{ inputs.issue_number }}"
-          else
-            git checkout -b "work/${{ inputs.issue_number }}"
-          fi
-          git config user.name "task-board-runner"
-          git config user.email "task-board-runner@users.noreply.github.com"
+- name: Create work branch
+         id: checkout
+         working-directory: workspace
+         run: |
+           git fetch origin "work/${{ inputs.issue_number }}" 2>/dev/null || true
+           if git rev-parse --verify "origin/work/${{ inputs.issue_number }}" >/dev/null 2>&1; then
+             git checkout -B "work/${{ inputs.issue_number }}" "origin/work/${{ inputs.issue_number }}"
+           else
+             git checkout -b "work/${{ inputs.issue_number }}"
+           fi
+           git config user.name "task-board-runner"
+           git config user.email "task-board-runner@users.noreply.github.com"
+           BASE=$(git rev-parse HEAD)
+           echo "base=$BASE" >> "$GITHUB_OUTPUT"
 
       - name: Install opencode
         run: |
@@ -134,7 +137,56 @@ jobs:
             git diff --cached --quiet || git commit -m "feat(#${{ inputs.issue_number }}): agent implementation for ${{ steps.task.outputs.title }}"
           fi
 
-      - name: Push and create PR
+      - name: Verify work product
+         id: verify
+         run: |
+           # If no changes, fail immediately
+           if [ "${{ steps.changes.outputs.has_changes }}" != "true" ]; then
+               echo "verify_result=fail" >> $GITHUB_OUTPUT
+               echo "verify_reason=no changes" >> $GITHUB_OUTPUT
+               exit 0
+           fi
+
+           # Check log size
+           LOG_BYTES=$(wc -c < agent-output.txt 2>/dev/null || echo 0)
+           if [ "$LOG_BYTES" -lt 200 ]; then
+               echo "verify_result=fail" >> $GITHUB_OUTPUT
+               echo "verify_reason=log too small (${LOG_BYTES} bytes)" >> $GITHUB_OUTPUT
+               exit 0
+           fi
+
+           # Check for actual work: diff from base or untracked files or new commits
+           BASE="${{ steps.checkout.outputs.base }}"
+           # Diff from base
+           DIFF_COUNT=$(git diff --name-only "$BASE" | wc -l)
+           # Untracked files
+           UNTRACKED_COUNT=$(git ls-files --others --exclude-standard | wc -l)
+           # New commits since base
+           NEW_COMMITS=$(git rev-list --count "$BASE..HEAD" 2>/dev/null || echo 0)
+
+           if [ "$DIFF_COUNT" -eq 0 ] && [ "$UNTRACKED_COUNT" -eq 0 ] && [ "$NEW_COMMITS" -eq 0 ]; then
+               echo "verify_result=fail" >> $GITHUB_OUTPUT
+               echo "verify_reason=no work product (no diff, no untracked, no new commits)" >> $GITHUB_OUTPUT
+               exit 0
+           fi
+
+           # Run tests if applicable
+           TEST_RESULT=pass
+           if [ -f package.json ]; then
+               npm test -- --silent || TEST_RESULT=fail
+           elif [ -f pyproject.toml ]; then
+               pytest -q || TEST_RESULT=fail
+           fi
+
+           if [ "$TEST_RESULT" = "fail" ]; then
+               echo "verify_result=fail" >> $GITHUB_OUTPUT
+               echo "verify_reason=tests failed" >> $GITHUB_OUTPUT
+               exit 0
+           fi
+
+           echo "verify_result=pass" >> $GITHUB_OUTPUT
+           echo "verify_reason=OK" >> $GITHUB_OUTPUT
+       - name: Push and create PR
         if: steps.changes.outputs.has_changes == 'true'
         id: pr
         working-directory: workspace
@@ -149,9 +201,9 @@ jobs:
             --base main --head "work/${{ inputs.issue_number }}" --draft 2>&1) || true
           echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
 
-      - name: Mark task done
-        if: steps.changes.outputs.has_changes == 'true'
-        env:
+- name: Mark task done
+         if: steps.verify.outputs.verify_result == 'pass'
+         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           LOCK_LABEL: ${{ inputs.lock_label }}
@@ -182,16 +234,24 @@ jobs:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           LOCK_LABEL: ${{ inputs.lock_label }}
-        run: |
-          if [ "${{ steps.changes.outputs.has_changes || 'false' }}" = "true" ] && [ "${{ job.status }}" = "success" ]; then
-            exit 0
-          fi
-          gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
-            --remove-label status:in_progress --add-label status:new \
-            --remove-label "$LOCK_LABEL" 2>/dev/null || true
-          gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
-            --body "Worker ${{ github.run_id }} released the task after failure or no changes; re-queued for retry." \
-            2>/dev/null || true
+run: |
+           if [ "${{ steps.changes.outputs.has_changes || 'false' }}" = "true" ] && [ "${{ job.status }}" = "success" ] && [ "${{ steps.verify.outputs.verify_result || 'fail' }}" = "pass" ]; then
+             exit 0
+           fi
+           gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
+             --remove-label status:in_progress --add-label status:new \
+             --remove-label "$LOCK_LABEL" 2>/dev/null || true
+           REASON="unknown"
+           if [ "${{ steps.changes.outputs.has_changes || 'false' }}" != "true" ]; then
+               REASON="no changes"
+           elif [ "${{ job.status }}" != "success" ]; then
+               REASON="job failed (${{ job.status }})"
+           elif [ "${{ steps.verify.outputs.verify_result || 'fail' }}" != "pass" ]; then
+               REASON="verification failed: ${{ steps.verify.outputs.verify_reason }}"
+           fi
+           gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
+             --body "Worker ${{ github.run_id }} released the task due to $REASON; re-queued for retry." \
+             2>/dev/null || true
 
       - name: Upload agent output
         if: always()
