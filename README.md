@@ -19,6 +19,7 @@ Private repos get 2000 Actions minutes/month; public repos get unlimited. The ru
 Runner cannot reach the VPS-40 gateway (Tailscale-only) so it uses free DIRECT providers committed in `.github/runner-config.json`:
 
 - `groq` — llama-3.3-70b-versatile (12K TPM, free)
+- `dlab` — GPT-5.6 Sol (`DLAB_API_KEY`, model `gpt-5-6-sol`, first fallback after NVIDIA; 24-hour paid credit)
 - `cerebras` — llama3.1-8b, gpt-oss-120b, zai-glm-4.7 (free, higher TPM)
 - `mistral` — mistral-large-latest (free, ~1B tok/mo)
 - `together` — fallback (free-tier)
@@ -26,11 +27,14 @@ Runner cannot reach the VPS-40 gateway (Tailscale-only) so it uses free DIRECT p
 API keys live as GitHub Secrets in THIS repo:
 
 - `NVIDIA_API_KEY`
+- `DLAB_API_KEY` — temporary DLab Proxy key; omit or delete after its 24-hour credit expires
 - `KIOSAPI_API_KEY`
 - `SILICONFLOW_API_KEY`
 - `MISTRAL_API_KEY`
 - `TOGETHER_API_KEY`
 - `TASK_BOARD_PAT` — fine-grained PAT with `repo` scope on `ons96/task-board` (used by `gh` CLI for claim/push). The default `GITHUB_TOKEN` cannot act on other repos.
+
+Workers try NVIDIA first, then DLab GPT-5.6 Sol, then the existing KiosAPI, SiliconFlow, Mistral, and Together fallbacks. A failed request (including exhausted credits, authentication errors, rate limits, timeouts, and provider errors) moves to the next provider; the workflow only proceeds to verification after one provider exits successfully. Add `DLAB_API_KEY` as a repository secret; if absent or expired, DLab fails closed and the next fallback is attempted.
 
 ## Reverting
 
