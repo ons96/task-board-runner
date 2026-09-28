@@ -55,12 +55,10 @@ jobs:
               LOCK=$(gh issue view "$NUM" -R "$TASK_BOARD_REPO" --json labels \
                 --jq '[.labels[].name | select(startswith("locked-by:gha-"))] | .[0]' 2>/dev/null || true)
               [ -n "$LOCK" ] || continue
-              gh issue edit "$NUM" -R "$TASK_BOARD_REPO" \
-                --remove-label "status:in_progress" --add-label "status:new" \
-                --remove-label "$LOCK" >/dev/null 2>&1 || true
-              gh issue comment "$NUM" -R "$TASK_BOARD_REPO" \
-                --body "Sweeper released stale lock \`${LOCK}\` (age ${AGE}s). Re-queued as status:new." \
-                >/dev/null 2>&1 || true
+              bash runner/scripts/requeue-task.sh \
+                --issue "$NUM" --lock "$LOCK" \
+                --reason "stale lock sweep: ${LOCK} age ${AGE}s" \
+                || true
             fi
           done
 
@@ -95,12 +93,10 @@ jobs:
                 >/dev/null 2>&1 || true
               dispatched=$((dispatched + 1))
             else
-              gh issue edit "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
-                --remove-label "status:in_progress" --add-label "status:new" \
-                --remove-label "$LOCK_LABEL" >/dev/null 2>&1 || true
-              gh issue comment "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
-                --body "Dispatcher failed to start worker; re-queued as status:new." \
-                >/dev/null 2>&1 || true
+              bash runner/scripts/requeue-task.sh \
+                --issue "$ISSUE_NUM" --lock "$LOCK_LABEL" \
+                --reason "dispatcher run ${{ github.run_id }} failed to start the worker" \
+                || true
             fi
           done
           echo "Dispatched $dispatched worker(s)."
