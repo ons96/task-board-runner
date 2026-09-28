@@ -26,10 +26,14 @@ jobs:
         run: |
           bash -n scripts/claim-task.sh
           bash -n scripts/verify-work.sh
+          bash -n scripts/check-merge-policy.sh
           echo "shell syntax OK"
 
       - name: Verify-gate false-done cases
         run: bash scripts/verify-work.sh --self-test
+
+      - name: Merge policy checks
+        run: bash scripts/check-merge-policy.sh
 
       - name: Workflow YAML validation
         run: |
