@@ -26,10 +26,14 @@ jobs:
         run: |
           bash -n scripts/claim-task.sh
           bash -n scripts/verify-work.sh
+          bash -n scripts/requeue-task.sh
           echo "shell syntax OK"
 
       - name: Verify-gate false-done cases
         run: bash scripts/verify-work.sh --self-test
+
+      - name: Retry budget checks
+        run: bash scripts/requeue-task.sh --self-test
 
       - name: Workflow YAML validation
         run: |

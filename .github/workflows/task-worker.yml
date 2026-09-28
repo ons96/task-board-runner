@@ -238,6 +238,8 @@ jobs:
           git push "https://x-access-token:${GH_TOKEN}@github.com/ons96/${{ inputs.project }}.git" \
             "work/${{ inputs.issue_number }}" || true
 
+      # Requeues through the bounded retry budget (#933): status:new while
+      # attempts remain, then blocked:repeated-failure without re-queueing.
       - name: Release task
         if: always()
         env:
@@ -248,9 +250,6 @@ jobs:
           if [ "${{ steps.verify.outputs.verify_result || 'fail' }}" = "pass" ] && [ "${{ job.status }}" = "success" ]; then
             exit 0
           fi
-          gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
-            --remove-label status:in_progress --add-label status:new \
-            --remove-label "$LOCK_LABEL" 2>/dev/null || true
           REASON="unknown"
           if [ "${{ steps.changes.outputs.has_changes || 'false' }}" != "true" ]; then
             REASON="no changes"
@@ -260,9 +259,11 @@ jobs:
             # shellcheck disable=SC2016
             REASON='verification failed: ${{ steps.verify.outputs.verify_reason }}'
           fi
-          gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
-            --body "Worker ${{ github.run_id }} released the task due to $REASON; re-queued for retry." \
-            2>/dev/null || true
+          bash runner/scripts/requeue-task.sh \
+            --issue "$ISSUE_NUMBER" \
+            --lock "$LOCK_LABEL" \
+            --reason "worker run ${{ github.run_id }}: $REASON" \
+            || true
 
       - name: Upload agent output
         if: always()

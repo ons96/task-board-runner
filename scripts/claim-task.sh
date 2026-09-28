@@ -109,9 +109,12 @@ for prio_label in "${PRIORITY_ORDER[@]}"; do
     done
     if [[ "$PROJECT" == "unknown" ]]; then
       echo "Issue #$ISSUE_NUM has no project label, skipping" >&2
-      gh issue edit "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
-        --remove-label "status:in_progress" --add-label "status:new" \
-        --remove-label "$LOCK_LABEL" >/dev/null 2>&1 || true
+      SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+      bash "$SCRIPT_DIR/requeue-task.sh" \
+        --issue "$ISSUE_NUM" \
+        --lock "$LOCK_LABEL" \
+        --reason "issue has no project: label; cannot dispatch" \
+        >/dev/null 2>&1 || true
       continue
     fi
 
