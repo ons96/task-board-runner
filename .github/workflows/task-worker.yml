@@ -108,6 +108,17 @@ jobs:
           OPENCODE_DISABLE_EXTERNAL_SKILLS: '1'
           OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1'
         run: |
+          lease_refresh() {
+            while sleep 300; do
+              CURRENT=$(gh issue view "${{ inputs.issue_number }}" -R ons96/task-board --json labels \
+                --jq '[.labels[].name | select(startswith("lease-until:"))] | .[0] // empty' 2>/dev/null || true)
+              NEXT="lease-until:$(( $(date +%s) + 3600 ))"
+              [ -n "$CURRENT" ] && gh label create "$NEXT" -R ons96/task-board --color BFD4F2 >/dev/null 2>&1 || true
+              [ -n "$CURRENT" ] && gh issue edit "${{ inputs.issue_number }}" -R ons96/task-board --remove-label "$CURRENT" --add-label "$NEXT" >/dev/null 2>&1 || true
+            done
+          }
+          lease_refresh & LEASE_PID=$!
+          trap 'kill "$LEASE_PID" 2>/dev/null || true' EXIT
           PROMPT="You are an autonomous coding agent. Issue #${{ inputs.issue_number }} from the task board: ${{ steps.task.outputs.title }}
 
           Issue body:
