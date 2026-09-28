@@ -134,8 +134,36 @@ jobs:
             git diff --cached --quiet || git commit -m "feat(#${{ inputs.issue_number }}): agent implementation for ${{ steps.task.outputs.title }}"
           fi
 
-      - name: Push and create PR
+      # Verify gate (task-board #932, ported from task-board-loop's verify
+      # gate, PRs #13/#14): an issue may only be marked status:done when the
+      # committed diff vs origin/main has real substance (>=2 files touched
+      # and >=5 insertions; lockfile+manifest bumps whitelisted). Trivial
+      # diffs (a README tweak, a single comment line) fail here, so the
+      # issue is requeued status:new instead of closed done. Fails closed:
+      # an unmeasurable diff also requeues, never marks done.
+      - name: Verify work product
+        id: verify
         if: steps.changes.outputs.has_changes == 'true'
+        working-directory: workspace
+        run: |
+          set +e
+          bash ../runner/scripts/verify-work-product.sh origin/main > /tmp/verify-gate.out
+          VERIFY_CODE=$?
+          set -e
+          cat /tmp/verify-gate.out
+          val() { grep -m1 "^$1=" /tmp/verify-gate.out | cut -d= -f2-; }
+          {
+            echo "verdict=$(val verdict)"
+            echo "files=$(val files)"
+            echo "insertions=$(val insertions)"
+            echo "reason<<VERIFY_REASON_EOF"
+            val reason || true
+            echo "VERIFY_REASON_EOF"
+          } >> "$GITHUB_OUTPUT"
+          exit "$VERIFY_CODE"
+
+      - name: Push and create PR
+        if: steps.changes.outputs.has_changes == 'true' && steps.verify.outputs.verdict == 'pass'
         id: pr
         working-directory: workspace
         env:
@@ -150,7 +178,7 @@ jobs:
           echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
 
       - name: Mark task done
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.changes.outputs.has_changes == 'true' && steps.verify.outputs.verdict == 'pass'
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -182,15 +210,23 @@ jobs:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           LOCK_LABEL: ${{ inputs.lock_label }}
+          VERIFY_VERDICT: ${{ steps.verify.outputs.verdict }}
+          VERIFY_REASON: ${{ steps.verify.outputs.reason }}
         run: |
-          if [ "${{ steps.changes.outputs.has_changes || 'false' }}" = "true" ] && [ "${{ job.status }}" = "success" ]; then
+          if [ "${{ steps.changes.outputs.has_changes || 'false' }}" = "true" ] \
+             && [ "$VERIFY_VERDICT" = "pass" ] \
+             && [ "${{ job.status }}" = "success" ]; then
             exit 0
           fi
           gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
             --remove-label status:in_progress --add-label status:new \
             --remove-label "$LOCK_LABEL" 2>/dev/null || true
+          REASON="failure or no changes"
+          if [ "$VERIFY_VERDICT" = "fail" ]; then
+            REASON="verify gate rejected the work product${VERIFY_REASON:+ ($VERIFY_REASON)}"
+          fi
           gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
-            --body "Worker ${{ github.run_id }} released the task after failure or no changes; re-queued for retry." \
+            --body "Worker ${{ github.run_id }} released the task after ${REASON}; re-queued for retry." \
             2>/dev/null || true
 
       - name: Upload agent output

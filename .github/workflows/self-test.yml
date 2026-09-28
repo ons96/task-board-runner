@@ -1,0 +1,36 @@
+name: Runner Self-Test
+
+on:
+  push:
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Shell syntax check
+        run: |
+          bash -n scripts/claim-task.sh
+          bash -n scripts/verify-work-product.sh
+          echo "shell syntax OK"
+
+      - name: Verify-gate fixtures
+        run: bash scripts/verify-work-product.sh --self-test
+
+      - name: Workflow YAML validation
+        run: |
+          python3 -c "import yaml,glob; [yaml.safe_load(open(f)) for f in glob.glob('.github/workflows/*.yml')]; print('YAML OK')"

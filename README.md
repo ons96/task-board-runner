@@ -12,7 +12,8 @@ Private repos get 2000 Actions minutes/month; public repos get unlimited. The ru
 2. The short dispatcher claims up to four issues with `claim-task.sh` and starts one `task-worker` run per issue.
 3. Workers run concurrently across different issues, with `task-$ISSUE_NUM` concurrency preventing duplicate workers for one issue.
 4. Each worker clones the target repo on `work/$ISSUE_NUM`, runs opencode, pushes the branch, and opens a draft PR.
-5. Issue locks survive dispatcher exit; workers release them on success, failure, or no-change paths.
+5. A verify gate (`scripts/verify-work-product.sh`, ported from task-board-loop, task #932) rejects trivial work products — diffs under 2 files touched or 5 insertions vs `main`, with lockfile+manifest bumps whitelisted — and requeues the issue `status:new` with a reason comment instead of marking it done.
+6. Issue locks survive dispatcher exit; workers release them on success, failure, no-change, or verify-fail paths.
 
 ## LLM providers used
 
@@ -45,6 +46,10 @@ Only issues with `tag:cross-device` OR `tag:github-actions` are claimable. `devi
 ## Manual run
 
 GitHub → Actions tab → `Claim and Run Task` → `Run workflow` → optional `scope_filter` input (`cross-device,github-actions` default).
+
+## Self-tests
+
+`Runner Self-Test` runs on pushes and PRs touching `scripts/**` or workflows: shell syntax checks, workflow YAML validation, and verify-gate fixtures proving trivial diffs are rejected, real diffs pass, and lockfile-only bumps are whitelisted (`scripts/verify-work-product.sh --self-test`).
 
 ## Costs
 
