@@ -26,10 +26,14 @@ jobs:
         run: |
           bash -n scripts/claim-task.sh
           bash -n scripts/verify-work.sh
+          bash -n scripts/provider-fallback.sh
           echo "shell syntax OK"
 
       - name: Verify-gate false-done cases
         run: bash scripts/verify-work.sh --self-test
+
+      - name: Provider fallback classification
+        run: bash scripts/provider-fallback.sh --self-test
 
       - name: Workflow YAML validation
         run: |

@@ -36,6 +36,8 @@ API keys live as GitHub Secrets in THIS repo:
 
 Workers try NVIDIA first, then DLab GPT-5.6 Sol, then the existing KiosAPI, SiliconFlow, Mistral, and Together fallbacks. A failed request (including exhausted credits, authentication errors, rate limits, timeouts, and provider errors) moves to the next provider; the workflow only proceeds to verification after one provider exits successfully. Add `DLAB_API_KEY` as a repository secret; if absent or expired, DLab fails closed and the next fallback is attempted.
 
+Provider failures are logged as `provider_failure` records without response bodies or credentials. Rate limits are classified separately and use bounded 1s/5s/25s/30s backoff before the next approved provider; auth failures are not retried against the same provider.
+
 ## Reverting
 
 ```bash

@@ -126,10 +126,12 @@ jobs:
             "together/meta-llama/Llama-3.3-70B-Instruct-Turbo"
           )
           succeeded=0
+          rate_limit_streak=0
           for MODEL in "${PROVIDERS[@]}"; do
             echo "Attempting provider: $MODEL" | tee -a ../agent-output.txt
+            : > ../provider-attempt.txt
             set +e
-            opencode run --pure --model "$MODEL" "$PROMPT" 2>&1 | tee -a ../agent-output.txt
+            opencode run --pure --model "$MODEL" "$PROMPT" 2>&1 | tee -a ../agent-output.txt ../provider-attempt.txt
             STATUS=${PIPESTATUS[0]}
             set -e
             if [ "$STATUS" -eq 0 ]; then
@@ -137,7 +139,17 @@ jobs:
               echo "Provider succeeded: $MODEL" | tee -a ../agent-output.txt
               break
             fi
-            echo "Provider failed ($STATUS): $MODEL; trying next fallback" | tee -a ../agent-output.txt
+            KIND=$(bash ../runner/scripts/provider-fallback.sh --classify ../provider-attempt.txt 2>/dev/null || true)
+            KIND=${KIND:-provider_error}
+            if [ "$KIND" = "rate_limited" ]; then
+              rate_limit_streak=$((rate_limit_streak + 1))
+              BACKOFF=$(bash ../runner/scripts/provider-fallback.sh --backoff "$rate_limit_streak")
+              echo "provider_failure kind=$KIND model=$MODEL status=$STATUS backoff_seconds=$BACKOFF" | tee -a ../agent-output.txt
+              sleep "$BACKOFF"
+            else
+              rate_limit_streak=0
+              echo "provider_failure kind=$KIND model=$MODEL status=$STATUS backoff_seconds=0" | tee -a ../agent-output.txt
+            fi
           done
           if [ "$succeeded" -ne 1 ]; then
             echo "ERROR: all configured providers failed" | tee -a ../agent-output.txt
