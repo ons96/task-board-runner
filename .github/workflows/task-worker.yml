@@ -73,6 +73,7 @@ jobs:
           path: workspace
 
       - name: Create work branch
+        id: baseline
         working-directory: workspace
         run: |
           git fetch origin "work/${{ inputs.issue_number }}" 2>/dev/null || true
@@ -83,6 +84,8 @@ jobs:
           fi
           git config user.name "task-board-runner"
           git config user.email "task-board-runner@users.noreply.github.com"
+          BASE=$(git rev-parse HEAD)
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
 
       - name: Install opencode
         run: |
@@ -96,6 +99,7 @@ jobs:
         env:
           OPENCODE_CONFIG_CONTENT: ${{ steps.cfg.outputs.content }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          DLAB_API_KEY: ${{ secrets.DLAB_API_KEY }}
           KIOSAPI_API_KEY: ${{ secrets.KIOSAPI_API_KEY }}
           SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
@@ -112,7 +116,33 @@ jobs:
           Implement the requested work in this repo. Follow existing conventions. Keep diffs minimal. Do NOT push or open a PR — the workflow pushes and opens the PR.
           Work in branch work/${{ inputs.issue_number }} and continue from any partial commits already on it.
           Commit incrementally (git add -A && git commit) every ~10 minutes or per completed unit, so partial progress survives step timeouts."
-          opencode run --pure --model nvidia/z-ai/glm-5.3 "$PROMPT" 2>&1 | tee ../agent-output.txt || true
+          : > ../agent-output.txt
+          PROVIDERS=(
+            "nvidia/z-ai/glm-5.3"
+            "dlab/gpt-5-6-sol"
+            "kiosapi/muse-spark-1.3-contributor"
+            "siliconflow/z-ai/glm-5.3"
+            "mistral/mistral-large-latest"
+            "together/meta-llama/Llama-3.3-70B-Instruct-Turbo"
+          )
+          succeeded=0
+          for MODEL in "${PROVIDERS[@]}"; do
+            echo "Attempting provider: $MODEL" | tee -a ../agent-output.txt
+            set +e
+            opencode run --pure --model "$MODEL" "$PROMPT" 2>&1 | tee -a ../agent-output.txt
+            STATUS=${PIPESTATUS[0]}
+            set -e
+            if [ "$STATUS" -eq 0 ]; then
+              succeeded=1
+              echo "Provider succeeded: $MODEL" | tee -a ../agent-output.txt
+              break
+            fi
+            echo "Provider failed ($STATUS): $MODEL; trying next fallback" | tee -a ../agent-output.txt
+          done
+          if [ "$succeeded" -ne 1 ]; then
+            echo "ERROR: all configured providers failed" | tee -a ../agent-output.txt
+            exit 1
+          fi
           if grep -qE '^  opencode (run|attach|serve) ' ../agent-output.txt; then
             echo "ERROR: opencode printed CLI help instead of running."
             exit 1
@@ -134,16 +164,50 @@ jobs:
             git diff --cached --quiet || git commit -m "feat(#${{ inputs.issue_number }}): agent implementation for ${{ steps.task.outputs.title }}"
           fi
 
-      # Verify gate (task-board #932, ported from task-board-loop's verify
-      # gate, PRs #13/#14): an issue may only be marked status:done when the
-      # committed diff vs origin/main has real substance (>=2 files touched
-      # and >=5 insertions; lockfile+manifest bumps whitelisted). Trivial
-      # diffs (a README tweak, a single comment line) fail here, so the
-      # issue is requeued status:new instead of closed done. Fails closed:
-      # an unmeasurable diff also requeues, never marks done.
-      - name: Verify work product
+      # Verification gate (task-board #934, ported from task-board-loop
+      # verify_work PRs #13/#14): an agent run counts as success ONLY if this
+      # attempt produced a real work product. Log-only runs, missing commits,
+      # and failed tests FAIL here and fall through to the Release step,
+      # which requeues the task instead of marking it done.
+      # Always exits 0; the verdict is in steps.verify.outputs.verify_result
+      # so a gate failure requeues instead of failing the whole job.
+      - name: Verify agent run
         id: verify
-        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          set +e
+          bash runner/scripts/verify-work.sh \
+            --log agent-output.txt \
+            --worktree workspace \
+            --branch "work/${{ inputs.issue_number }}" \
+            --base "${{ steps.baseline.outputs.base }}" \
+            --reason-file /tmp/verify-reason
+          CODE=$?
+          set -e
+          REASON=$(cat /tmp/verify-reason 2>/dev/null || echo "unknown")
+          if [ "$CODE" -eq 0 ]; then
+            echo "verify_result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "verify_result=fail" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "verify_reason<<REASON_EOF"
+            echo "$REASON"
+            echo "REASON_EOF"
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+
+      # Work-product verify gate (task-board #932, the other half of
+      # task-board-loop's verify gate, PRs #13/#14): the #934 gate above
+      # rejects runs with no diff at all; this one rejects diffs that exist
+      # but are trivial — fewer than 2 files touched or 5 insertions vs
+      # origin/main, with lockfile+manifest bumps whitelisted
+      # (scripts/verify-work-product.sh). A failing verdict fails the job:
+      # Salvage banks the commit on the work branch and Release requeues the
+      # issue status:new with the reason, never status:done. Fails closed on
+      # unmeasurable diffs.
+      - name: Verify work product substance
+        id: substance
+        if: steps.changes.outputs.has_changes == 'true' && steps.verify.outputs.verify_result == 'pass'
         working-directory: workspace
         run: |
           set +e
@@ -163,7 +227,7 @@ jobs:
           exit "$VERIFY_CODE"
 
       - name: Push and create PR
-        if: steps.changes.outputs.has_changes == 'true' && steps.verify.outputs.verdict == 'pass'
+        if: steps.verify.outputs.verify_result == 'pass' && steps.substance.outputs.verdict == 'pass'
         id: pr
         working-directory: workspace
         env:
@@ -178,7 +242,7 @@ jobs:
           echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
 
       - name: Mark task done
-        if: steps.changes.outputs.has_changes == 'true' && steps.verify.outputs.verdict == 'pass'
+        if: steps.verify.outputs.verify_result == 'pass' && steps.substance.outputs.verdict == 'pass'
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -210,23 +274,32 @@ jobs:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           LOCK_LABEL: ${{ inputs.lock_label }}
-          VERIFY_VERDICT: ${{ steps.verify.outputs.verdict }}
-          VERIFY_REASON: ${{ steps.verify.outputs.reason }}
+          VERIFY_RESULT: ${{ steps.verify.outputs.verify_result }}
+          VERIFY_REASON: ${{ steps.verify.outputs.verify_reason }}
+          SUBSTANCE_VERDICT: ${{ steps.substance.outputs.verdict }}
+          SUBSTANCE_REASON: ${{ steps.substance.outputs.reason }}
         run: |
-          if [ "${{ steps.changes.outputs.has_changes || 'false' }}" = "true" ] \
-             && [ "$VERIFY_VERDICT" = "pass" ] \
+          # Success only when both verify gates passed and the job is green.
+          if [ "${VERIFY_RESULT:-fail}" = "pass" ] \
+             && [ "${SUBSTANCE_VERDICT:-fail}" = "pass" ] \
              && [ "${{ job.status }}" = "success" ]; then
             exit 0
           fi
           gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
             --remove-label status:in_progress --add-label status:new \
             --remove-label "$LOCK_LABEL" 2>/dev/null || true
-          REASON="failure or no changes"
-          if [ "$VERIFY_VERDICT" = "fail" ]; then
-            REASON="verify gate rejected the work product${VERIFY_REASON:+ ($VERIFY_REASON)}"
+          REASON="unknown"
+          if [ "${{ steps.changes.outputs.has_changes || 'false' }}" != "true" ]; then
+            REASON="no changes"
+          elif [ "${SUBSTANCE_VERDICT:-}" = "fail" ]; then
+            REASON="work-product verify gate rejected the diff${SUBSTANCE_REASON:+ ($SUBSTANCE_REASON)}"
+          elif [ "${VERIFY_RESULT:-}" = "fail" ]; then
+            REASON="verification failed: ${VERIFY_REASON:-unknown}"
+          elif [ "${{ job.status }}" != "success" ]; then
+            REASON="job failed (${{ job.status }})"
           fi
           gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
-            --body "Worker ${{ github.run_id }} released the task after ${REASON}; re-queued for retry." \
+            --body "Worker ${{ github.run_id }} released the task due to $REASON; re-queued for retry." \
             2>/dev/null || true
 
       - name: Upload agent output
