@@ -7,6 +7,7 @@
 # README, adds a single comment line) and the worker marks the issue done.
 #
 # Usage: verify-work-product.sh [BASE_REF]     default: origin/main
+#        verify-work-product.sh --self-test   # fixture cases, no network needed
 # Run from inside the target repo worktree, after everything is committed.
 #
 # Substance bar: reject when fewer than VERIFY_MIN_FILES files are touched OR
@@ -20,7 +21,12 @@
 # Exit 0 = real work product (marking done allowed); exit 1 = trivial (requeue).
 set -euo pipefail
 
-BASE_REF="${1:-origin/main}"
+SELF_TEST=0
+case "${1:-}" in
+  --self-test) SELF_TEST=1 ;;
+  "") BASE_REF="origin/main" ;;
+  *) BASE_REF="$1" ;;
+esac
 MIN_FILES="${VERIFY_MIN_FILES:-2}"
 MIN_INSERTIONS="${VERIFY_MIN_INSERTIONS:-5}"
 
@@ -77,18 +83,23 @@ dependency_shaped() {
   # every changed path is a lockfile or a package manifest, at least one path is
   # a lockfile, and each changed lockfile's sibling manifest exists (committed
   # in HEAD or added in this diff). Anything else is not purely dependency work.
-  local path locks=0 manifest sibling
+  # ponytail: no grep-over-printf pipe here — `grep -q` closes the pipe early
+  # and under `set -o pipefail` a half-written pipe reads as failure, which
+  # would false-reject a legitimate lockfile bump. Plain loops are safe.
+  local path sibling s found locks=0
   for path in "${CHANGED_PATHS[@]}"; do
     if is_lockfile "$path"; then
       locks=$((locks + 1))
-      manifest=$(manifest_for "$path")
+      sibling=$(manifest_for "$path")
       case "$path" in
-        */*) sibling="${path%/*}/$manifest" ;;
-        *)   sibling="$manifest" ;;
+        */*) sibling="${path%/*}/$sibling" ;;
       esac
-      if ! git cat-file -e "HEAD:$sibling" 2>/dev/null \
-         && ! printf '%s\n' "${CHANGED_PATHS[@]}" | grep -qxF "$sibling"; then
-        return 1
+      if ! git cat-file -e "HEAD:$sibling" 2>/dev/null; then
+        found=0
+        for s in "${CHANGED_PATHS[@]}"; do
+          [ "$s" = "$sibling" ] && { found=1; break; }
+        done
+        [ "$found" -eq 1 ] || return 1
       fi
     elif ! is_manifest "$path"; then
       return 1
@@ -96,6 +107,112 @@ dependency_shaped() {
   done
   [ "$locks" -gt 0 ]
 }
+
+# ponytail: self-test — the false-done shapes this gate exists to catch, as
+# throwaway fixture repos. Proves the gate rejects trivial diffs, passes real
+# ones, honors the lockfile whitelist, and fails closed on unmeasurable diffs.
+self_test() {
+  local self total=0 pass=0 out code verdict reason
+  self="$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")"
+  # tmp is global on purpose: the EXIT trap fires after this function returns,
+  # when its locals would already be gone.
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+
+  repo() { # repo NAME — fixture repo: base commit on main, then a work branch
+    git init -q -b main "$tmp/$1"
+    git -C "$tmp/$1" config user.email self@test
+    git -C "$tmp/$1" config user.name self-test
+    echo "base line" > "$tmp/$1/base.txt"
+    git -C "$tmp/$1" add -A
+    git -C "$tmp/$1" commit -qm base
+    git -C "$tmp/$1" checkout -q -b work
+  }
+
+  commit_all() { # commit_all NAME MSG
+    git -C "$tmp/$1" add -A
+    git -C "$tmp/$1" commit -qm "$2"
+  }
+
+  check() { # check EXPECT NAME REASON_PREFIX DESC
+    local expect="$1" name="$2" want="$3" desc="$4" want_code
+    total=$((total + 1))
+    out=$(cd "$tmp/$name" && VERIFY_MIN_FILES=2 VERIFY_MIN_INSERTIONS=5 bash "$self" main 2>&1) && code=0 || code=$?
+    verdict=$(printf '%s\n' "$out" | sed -n 's/^verdict=//p')
+    reason=$(printf '%s\n' "$out" | sed -n 's/^reason=//p')
+    if [ "$expect" = pass ]; then want_code=0; else want_code=1; fi
+    if [ "$code" -eq "$want_code" ] && [ "$verdict" = "$expect" ] \
+       && [[ "$reason" == "$want"* ]]; then
+      pass=$((pass + 1))
+      echo "PASS: $desc"
+    else
+      echo "FAIL: $desc — expected $expect ('$want*'), got exit=$code verdict=$verdict reason='$reason'"
+    fi
+  }
+
+  # --- false-done shapes: must be rejected ---
+  repo trivial
+  echo "# a single comment line" >> "$tmp/trivial/README.md"
+  commit_all trivial "trivial: one comment line"
+  check fail trivial "trivial diff:" "single-comment-line edit is rejected"
+
+  repo tiny
+  echo "# a" >> "$tmp/tiny/base.txt"
+  echo "# b" > "$tmp/tiny/notes.txt"
+  commit_all tiny "tiny: two files, two insertions"
+  check fail tiny "trivial diff:" "two files but under 5 insertions is rejected"
+
+  repo empty
+  git -C "$tmp/empty" commit -q --allow-empty -m "empty commit"
+  check fail empty "no effective diff" "commits ahead of base with identical tree are rejected"
+
+  repo orphan
+  printf '{"lockfileVersion":3}\n' > "$tmp/orphan/package-lock.json"
+  commit_all orphan "orphan lockfile change"
+  check fail orphan "trivial diff:" "lockfile with no matching package manifest is rejected"
+
+  repo island
+  git -C "$tmp/island" checkout -q --orphan unrelated
+  git -C "$tmp/island" commit -q --allow-empty -m island
+  check fail island "cannot measure" "branch with no merge-base to main fails closed"
+
+  # --- real work: must pass ---
+  repo real
+  printf 'fix1\nfix2\nfix3\n' >> "$tmp/real/base.txt"
+  printf 'new1\nnew2\nnew3\n' > "$tmp/real/fix.txt"
+  commit_all real "real: fix across two files"
+  check pass real "diff has substance:" "real diff (2 files, 6 insertions) passes"
+
+  # --- lockfile whitelist: must pass however small ---
+  repo bump
+  printf '{"name":"x","version":"1.1.0"}\n' > "$tmp/bump/package.json"
+  printf '{"lockfileVersion":3}\n' > "$tmp/bump/package-lock.json"
+  commit_all bump "bump: manifest + lockfile"
+  check pass bump "dependency-shaped diff" "manifest+lockfile bump passes despite tiny diff"
+
+  repo lockonly
+  printf '{"name":"x"}\n' > "$tmp/lockonly/package.json"
+  git -C "$tmp/lockonly" add package.json
+  git -C "$tmp/lockonly" commit -qm "base: manifest"
+  printf '{"lockfileVersion":3,"packages":{}}\n' > "$tmp/lockonly/package-lock.json"
+  commit_all lockonly "lockonly: lockfile regen"
+  check pass lockonly "dependency-shaped diff" "lockfile-only regen passes (manifest already in HEAD)"
+
+  repo nested
+  mkdir -p "$tmp/nested/sub"
+  printf '{"name":"y"}\n' > "$tmp/nested/sub/package.json"
+  printf '{"lockfileVersion":3}\n' > "$tmp/nested/sub/package-lock.json"
+  commit_all nested "nested: monorepo package bump"
+  check pass nested "dependency-shaped diff" "subdirectory manifest+lockfile bump passes"
+
+  echo "self-test: $pass/$total fixture cases passed"
+  [ "$pass" -eq "$total" ]
+}
+
+if [ "$SELF_TEST" -eq 1 ]; then
+  self_test
+  exit 0
+fi
 
 FILES=0
 INSERTIONS=0
