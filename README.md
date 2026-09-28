@@ -19,15 +19,21 @@ Private repos get 2000 Actions minutes/month; public repos get unlimited. The ru
 
 Releases go through `scripts/requeue-task.sh`, which counts the issue's `re-queued` release comments (worker releases, stale-lock sweeps, and dispatcher failures all consume the same budget). While attempts remain the task goes back to `status:new`; once the budget (3 retries) is exhausted the issue is labeled `blocked:repeated-failure` and left open for a human instead of requeueing. To re-arm a blocked task, remove the label and add `status:new`.
 
+## Epic #933 status
+
+Child-task status, branch map, merge-order notes, and explicit block reasons
+for the reliability-hardening epic live in [docs/epic-933-status.md](docs/epic-933-status.md).
+
 ## LLM providers used
 
 Runner cannot reach the VPS-40 gateway (Tailscale-only) so it uses free DIRECT providers committed in `.github/runner-config.json`:
 
-- `groq` — llama-3.3-70b-versatile (12K TPM, free)
+- `nvidia` — z-ai/glm-5.3 (primary, NIM free tier)
 - `dlab` — GPT-5.6 Sol (`DLAB_API_KEY`, model `gpt-5-6-sol`, first fallback after NVIDIA; 24-hour paid credit)
-- `cerebras` — llama3.1-8b, gpt-oss-120b, zai-glm-4.7 (free, higher TPM)
+- `kiosapi` — muse-spark-1.3-contributor (fallback)
+- `siliconflow` — z-ai/glm-5.3 (fallback)
 - `mistral` — mistral-large-latest (free, ~1B tok/mo)
-- `together` — fallback (free-tier)
+- `together` — meta-llama/Llama-3.3-70B-Instruct-Turbo (free-tier fallback)
 
 API keys live as GitHub Secrets in THIS repo:
 
