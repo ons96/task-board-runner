@@ -287,9 +287,24 @@ jobs:
           if [ "${{ steps.verify.outputs.verify_result || 'fail' }}" = "pass" ] && [ "${{ job.status }}" = "success" ]; then
             exit 0
           fi
-          gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
-            --remove-label status:in_progress --add-label status:new \
-            --remove-label "$LOCK_LABEL" 2>/dev/null || true
+          MAX_RETRIES=2
+          ATTEMPTS=$(gh issue view "$ISSUE_NUMBER" -R ons96/task-board --json labels \
+            --jq '[.labels[].name | select(startswith("attempts:")) | sub("^attempts:"; "") | tonumber] | max // 0' 2>/dev/null || echo 0)
+          NEXT_ATTEMPTS=$((ATTEMPTS + 1))
+          gh label create "attempts:$NEXT_ATTEMPTS" -R ons96/task-board --color BFD4F2 >/dev/null 2>&1 || true
+          if [ "$(bash runner/scripts/retry-budget.sh --state "$NEXT_ATTEMPTS" "$MAX_RETRIES")" = blocked ]; then
+            gh label create retry-exhausted -R ons96/task-board --color B60205 >/dev/null 2>&1 || true
+            gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
+              --remove-label status:in_progress --add-label status:blocked \
+              --remove-label "$LOCK_LABEL" --add-label retry-exhausted \
+              --add-label "attempts:$NEXT_ATTEMPTS" 2>/dev/null || true
+            REQUEUE_STATE="blocked after $NEXT_ATTEMPTS attempts"
+          else
+            gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
+              --remove-label status:in_progress --add-label status:new \
+              --remove-label "$LOCK_LABEL" --add-label "attempts:$NEXT_ATTEMPTS" 2>/dev/null || true
+            REQUEUE_STATE="re-queued attempt $NEXT_ATTEMPTS/$MAX_RETRIES"
+          fi
           REASON="unknown"
           if [ "${{ steps.changes.outputs.has_changes || 'false' }}" != "true" ]; then
             REASON="no changes"
@@ -300,7 +315,7 @@ jobs:
             REASON='verification failed: ${{ steps.verify.outputs.verify_reason }}'
           fi
           gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
-            --body "Worker ${{ github.run_id }} released the task due to $REASON; re-queued for retry." \
+            --body "Worker ${{ github.run_id }} $REQUEUE_STATE: $REASON; run=https://github.com/ons96/task-board-runner/actions/runs/${{ github.run_id }}" \
             2>/dev/null || true
 
       - name: Upload agent output
