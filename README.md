@@ -16,7 +16,7 @@ Private repos get 2000 Actions minutes/month; public repos get unlimited. The ru
 
 ## LLM providers used
 
-Runner cannot reach the VPS-40 gateway (Tailscale-only) so it uses free DIRECT providers committed in `.github/runner-config.json`:
+Runner cannot reach the VPS-40 gateway (Tailscale-only) so it uses free DIRECT providers committed in `.github/runner-config.json`. Temporary providers may be listed in `provider-manifest.json`; the manifest is optional and empty by default. Entries marked non-free, expired, or missing their named GitHub Secret are ignored. Never add credentials to the manifest.
 
 - `dlab` — GPT-5.6 Sol (`DLAB_API_KEY`, model `gpt-5-6-sol`, primary while temporary credit lasts)
 - `dlab-free` — Space Bunny and Nemotron 3 Ultra (`DLAB_FREE_API_KEY`, free-only key)
@@ -29,6 +29,12 @@ API keys live as GitHub Secrets in THIS repo:
 - `TASK_BOARD_PAT` — fine-grained PAT with `repo` scope on `ons96/task-board` (used by `gh` CLI for claim/push). The default `GITHUB_TOKEN` cannot act on other repos.
 
 Workers try DLab GPT-5.6 Sol, then NVIDIA GLM-5.3, followed by DLab free-key Space Bunny and Nemotron 3 Ultra. A nonzero `opencode run` exit moves to the next model; missing or expired DLab keys fail closed. After a successful run, the verification gate checks for a work product before the workflow opens a draft PR. DLab free-key models were trap-tested successfully; `atria-dawn-preview` was omitted because it returned 429 during testing. SiliconFlow GLM-5.3 was tested but is paid ($1.40/M input, $4.40/M output), so it is not configured.
+
+Workers use the stable configured chain above. Valid temporary providers are appended only when their manifest entry is free, unexpired, and its credential secret exists. Failures move to the next provider; no temporary provider is required for the stable chain to run.
+
+### Temporary provider manifest
+
+Each entry specifies `id`, `model`, HTTPS `base_url`, `credential_env` (secret name only), timezone-qualified `expires_at`, numeric `fallback_position`, and `free_tier: true`. The loader skips expired, non-free, or uncredentialed entries and merges eligible provider metadata into the OpenCode config without printing secret values. A manifest entry's `credential_env` must name a secret that is already passed to the workflow's `Load runner config` and `Run opencode` steps. Use `python3 scripts/provider-manifest.py --self-test` before onboarding; remove an entry to retire it. Runtime failures continue through the static fallback chain; GitHub secret rotation is manual and requires approval.
 
 ## Reverting
 
