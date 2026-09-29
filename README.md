@@ -16,10 +16,9 @@ Private repos get 2000 Actions minutes/month; public repos get unlimited. The ru
 
 ## LLM providers used
 
-Runner cannot reach the VPS-40 gateway (Tailscale-only) so it uses free DIRECT providers committed in `.github/runner-config.json`:
+Runner cannot reach the VPS-40 gateway (Tailscale-only) so it uses free DIRECT providers committed in `.github/runner-config.json`. Temporary providers may be listed in `provider-manifest.json`; the manifest is optional and empty by default. Entries marked non-free, expired, or missing their named GitHub Secret are ignored. Never add credentials to the manifest.
 
 - `groq` — llama-3.3-70b-versatile (12K TPM, free)
-- `dlab` — GPT-5.6 Sol (`DLAB_API_KEY`, model `gpt-5-6-sol`, primary while temporary credit lasts)
 - `cerebras` — llama3.1-8b, gpt-oss-120b, zai-glm-4.7 (free, higher TPM)
 - `mistral` — mistral-large-latest (free, ~1B tok/mo)
 - `together` — fallback (free-tier)
@@ -27,14 +26,17 @@ Runner cannot reach the VPS-40 gateway (Tailscale-only) so it uses free DIRECT p
 API keys live as GitHub Secrets in THIS repo:
 
 - `NVIDIA_API_KEY`
-- `DLAB_API_KEY` — temporary DLab Proxy key; omit or delete after its 24-hour credit expires
 - `KIOSAPI_API_KEY`
 - `SILICONFLOW_API_KEY`
 - `MISTRAL_API_KEY`
 - `TOGETHER_API_KEY`
 - `TASK_BOARD_PAT` — fine-grained PAT with `repo` scope on `ons96/task-board` (used by `gh` CLI for claim/push). The default `GITHUB_TOKEN` cannot act on other repos.
 
-Workers try DLab GPT-5.6 Sol first, then NVIDIA, KiosAPI, SiliconFlow, Mistral, and Together. A failed request (including exhausted credits, authentication errors, rate limits, timeouts, and provider errors) moves to the next provider; the workflow only proceeds to verification after one provider exits successfully. Add `DLAB_API_KEY` as a repository secret; if absent or expired, DLab fails closed and NVIDIA is attempted next.
+Workers use the stable configured chain (NVIDIA, KiosAPI, SiliconFlow, Mistral, Together). Valid temporary providers are appended only when their manifest entry is free, unexpired, and its credential secret exists. Failures move to the next provider; no temporary provider is required for the stable chain to run.
+
+### Temporary provider manifest
+
+Each entry specifies `id`, `model`, HTTPS `base_url`, `credential_env` (secret name only), timezone-qualified `expires_at`, numeric `fallback_position`, and `free_tier: true`. The loader skips expired, non-free, or uncredentialed entries and merges eligible provider metadata into the OpenCode config without printing secret values. Use `python3 scripts/provider-manifest.py --self-test` before onboarding; remove an entry to retire it. Runtime failures continue through the static fallback chain; GitHub secret rotation is manual and requires approval.
 
 ## Reverting
 
