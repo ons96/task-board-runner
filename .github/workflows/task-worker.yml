@@ -20,7 +20,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: task-${{ inputs.issue_number }}
+  group: task-worker
   cancel-in-progress: false
 
 jobs:

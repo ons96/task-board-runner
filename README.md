@@ -9,8 +9,8 @@ Private repos get 2000 Actions minutes/month; public repos get unlimited. The ru
 ## How it works
 
 1. Cron schedule `*/30 * * * *` fires `claim-and-dispatch`.
-2. The short dispatcher claims up to four issues with `claim-task.sh` and starts one `task-worker` run per issue.
-3. Workers run concurrently across different issues, with `task-$ISSUE_NUM` concurrency preventing duplicate workers for one issue.
+2. The short dispatcher claims at most one issue with `claim-task.sh` and starts a `task-worker` run for it.
+3. Workers share a single global concurrency group, so exactly one worker runs at a time; the rest queue.
 4. Each worker clones the target repo on `work/$ISSUE_NUM`, runs opencode, pushes the branch, and opens a draft PR.
 5. Issue locks survive dispatcher exit; workers release them on success, failure, or no-change paths.
 
