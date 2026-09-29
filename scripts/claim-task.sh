@@ -18,6 +18,7 @@ TASK_BOARD_REPO="${TASK_BOARD_REPO:-ons96/task-board}"
 WORKER_ID=""
 HEARTBEAT_INTERVAL="${HEARTBEAT_INTERVAL:-300}"
 TASK_ALLOWED_SCOPES="${TASK_ALLOWED_SCOPES:-cross-device}"
+LEASE_SECONDS="${LEASE_SECONDS:-3600}"
 
 scope_allowed() {
   local row="$1"
@@ -43,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     --worker) WORKER_ID="$2"; shift 2 ;;
     --heartbeat) HEARTBEAT_INTERVAL="$2"; shift 2 ;;
     --scope) TASK_ALLOWED_SCOPES="$2"; shift 2 ;;
+    --lease-seconds) LEASE_SECONDS="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -82,12 +84,15 @@ for prio_label in "${PRIORITY_ORDER[@]}"; do
     ISSUE_BODY=$(echo "$row" | jq -r '.body')
 
     LOCK_LABEL="locked-by:${WORKER_ID}"
+    LEASE_LABEL="lease-until:$(( $(date +%s) + LEASE_SECONDS ))"
 
     gh label create "$LOCK_LABEL" -R "$TASK_BOARD_REPO" --color "BFD4F2" >/dev/null 2>&1 || true
+    gh label create "$LEASE_LABEL" -R "$TASK_BOARD_REPO" --color "BFD4F2" >/dev/null 2>&1 || true
 
     gh issue edit "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
       --add-label "status:in_progress" \
       --add-label "$LOCK_LABEL" \
+      --add-label "$LEASE_LABEL" \
       --remove-label "status:new" >/dev/null 2>&1 || continue
 
     sleep 2

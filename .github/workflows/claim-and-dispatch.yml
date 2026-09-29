@@ -46,18 +46,18 @@ jobs:
           NOW=$(date +%s)
           STALE=$(gh issue list -R "$TASK_BOARD_REPO" --state open --label "status:in_progress" --limit 100 \
             --json number,updatedAt,labels \
-            --jq '.[] | select(any(.labels[]; (.name | startswith("locked-by:gha-")))) | "\(.number) \(.updatedAt)"' 2>/dev/null || true)
-          echo "$STALE" | while read -r NUM UPDATED_AT; do
+            --jq '.[] | select(any(.labels[]; (.name | startswith("locked-by:gha-")))) | [.number, ([.labels[].name | select(startswith("lease-until:")) | sub("^lease-until:"; "") | tonumber] | .[0] // 0), .updatedAt] | @tsv' 2>/dev/null || true)
+          echo "$STALE" | while IFS=$'\t' read -r NUM LEASE_UNTIL UPDATED_AT; do
             [ -n "$NUM" ] || continue
             AGE=$(( NOW - $(date -u -d "$UPDATED_AT" +%s) ))
             # Worker jobs can run for 45 minutes; 1 hour avoids releasing live work.
-            if [ "$AGE" -gt 3600 ]; then
+            if [ "$LEASE_UNTIL" -gt 0 ] && [ "$NOW" -gt "$LEASE_UNTIL" ]; then
               LOCK=$(gh issue view "$NUM" -R "$TASK_BOARD_REPO" --json labels \
                 --jq '[.labels[].name | select(startswith("locked-by:gha-"))] | .[0]' 2>/dev/null || true)
               [ -n "$LOCK" ] || continue
               gh issue edit "$NUM" -R "$TASK_BOARD_REPO" \
                 --remove-label "status:in_progress" --add-label "status:new" \
-                --remove-label "$LOCK" >/dev/null 2>&1 || true
+                --remove-label "$LOCK" --remove-label "lease-until:$LEASE_UNTIL" >/dev/null 2>&1 || true
               gh issue comment "$NUM" -R "$TASK_BOARD_REPO" \
                 --body "Sweeper released stale lock \`${LOCK}\` (age ${AGE}s). Re-queued as status:new." \
                 >/dev/null 2>&1 || true
