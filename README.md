@@ -50,6 +50,18 @@ Only issues with `tag:cross-device` OR `tag:github-actions` are claimable. `devi
 
 GitHub → Actions tab → `Claim and Run Task` → `Run workflow` → optional `scope_filter` input (`cross-device,github-actions` default).
 
+## Worker onboarding
+
+1. Fork or clone this public repository; no local service is required.
+2. Add the required repository secrets: `TASK_BOARD_PAT` plus at least one approved model key (`NVIDIA_API_KEY` is the primary). Optional provider keys are used as fallbacks.
+3. Confirm the PAT can read and update `ons96/task-board` and can push to target repositories.
+4. Use `Claim and Dispatch Tasks` with the default scope, or provide a narrower `scope_filter` such as `github-actions`.
+5. Inspect the dispatched workflow run and the target issue. A successful run opens a draft PR and marks the issue done only after the work-product verification gate passes.
+
+The worker resumes an existing `work/<issue>` branch when present. Failed or no-change runs requeue the issue and preserve partial branch work. Do not manually delete a work branch while a worker is active.
+
+For a local preflight, run `bash scripts/claim-task.sh --help`, `bash scripts/verify-work.sh --self-test`, and the shell/YAML checks used by `Runner Self-Test`. Never paste tokens into issue text, workflow files, or commits.
+
 ## Costs
 
 - GitHub Actions: $0 (unlimited public minutes).
