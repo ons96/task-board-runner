@@ -46,10 +46,8 @@ MAX_RESERVED_TOKENS=100000
 free_provider_url() {
   case "$1" in
     nvidia) echo "https://integrate.api.nvidia.com/v1" ;;
-    kiosapi) echo "https://kiosapi.com/v1" ;;
-    siliconflow) echo "https://api.siliconflow.com/v1" ;;
-    mistral) echo "https://api.mistral.ai/v1" ;;
-    together) echo "https://api.together.xyz/v1" ;;
+    dlab) echo "https://api.dlabkeys.com/v1" ;;
+    dlab-free) echo "https://api.dlabkeys.com/v1" ;;
     *) echo "" ;;
   esac
 }
@@ -105,13 +103,22 @@ FREE_URL=$(free_provider_url "$PROVIDER")
 
 if command -v opencode >/dev/null 2>&1; then
   # NOTE: the resolved config contains real API keys — never print it.
-  if ! RESOLVED=$(OPENCODE_CONFIG_CONTENT="$(cat "$CONFIG_PATH")" opencode debug config 2>&1); then
-    fail "opencode rejected the config: $(echo "$RESOLVED" | tail -n 2 | head -n 1)"
+  # Route stdout to a file: opencode truncates piped stdout at 64KB, which
+  # corrupts large resolved configs (e.g. dev machines with big global configs).
+  ERRFILE=$(mktemp)
+  RESOLVED_FILE=$(mktemp)
+  if ! OPENCODE_PURE=1 OPENCODE_CONFIG_CONTENT="$(cat "$CONFIG_PATH")" \
+       opencode debug config >"$RESOLVED_FILE" 2>"$ERRFILE"; then
+    MSG=$(tail -n 2 "$ERRFILE" | head -n 1)
+    rm -f "$ERRFILE" "$RESOLVED_FILE"
+    fail "opencode rejected the config: $MSG"
   fi
-  echo "$RESOLVED" | jq -e \
+  rm -f "$ERRFILE"
+  jq -e \
       --argjson preserve "$PRESERVE" --argjson reserved "$RESERVED" --arg m "$MODEL" \
-      '(.compaction.auto == true) and (.compaction.preserve_recent_tokens == $preserve) and (.compaction.reserved == $reserved) and (.model == $m)' >/dev/null \
-    || fail "resolved config lost compaction settings or model (silently dropped key?)"
+      '(.compaction.auto == true) and (.compaction.preserve_recent_tokens == $preserve) and (.compaction.reserved == $reserved) and (.model == $m)' <"$RESOLVED_FILE" >/dev/null \
+    || { rm -f "$RESOLVED_FILE"; fail "resolved config lost compaction settings or model (silently dropped key?)"; }
+  rm -f "$RESOLVED_FILE"
 else
   echo "validate-runner-config: WARN: opencode not installed, skipping resolved-config check" >&2
 fi
