@@ -18,23 +18,17 @@ Private repos get 2000 Actions minutes/month; public repos get unlimited. The ru
 
 Runner cannot reach the VPS-40 gateway (Tailscale-only) so it uses free DIRECT providers committed in `.github/runner-config.json`:
 
-- `groq` — llama-3.3-70b-versatile (12K TPM, free)
 - `dlab` — GPT-5.6 Sol (`DLAB_API_KEY`, model `gpt-5-6-sol`, primary while temporary credit lasts)
-- `cerebras` — llama3.1-8b, gpt-oss-120b, zai-glm-4.7 (free, higher TPM)
-- `mistral` — mistral-large-latest (free, ~1B tok/mo)
-- `together` — fallback (free-tier)
+- `dlab-free` — Space Bunny and Nemotron 3 Ultra (`DLAB_FREE_API_KEY`, free-only key)
+- `nvidia` — GLM-5.3 (free, shared rate limits)
 
 API keys live as GitHub Secrets in THIS repo:
 
-- `NVIDIA_API_KEY`
 - `DLAB_API_KEY` — temporary DLab Proxy key; omit or delete after its 24-hour credit expires
-- `KIOSAPI_API_KEY`
-- `SILICONFLOW_API_KEY`
-- `MISTRAL_API_KEY`
-- `TOGETHER_API_KEY`
+- `DLAB_FREE_API_KEY` — separate DLab free-only key; only free models are configured
 - `TASK_BOARD_PAT` — fine-grained PAT with `repo` scope on `ons96/task-board` (used by `gh` CLI for claim/push). The default `GITHUB_TOKEN` cannot act on other repos.
 
-Workers try DLab GPT-5.6 Sol first, then NVIDIA, KiosAPI, SiliconFlow, Mistral, and Together. A failed request (including exhausted credits, authentication errors, rate limits, timeouts, and provider errors) moves to the next provider; the workflow only proceeds to verification after one provider exits successfully. Add `DLAB_API_KEY` as a repository secret; if absent or expired, DLab fails closed and NVIDIA is attempted next.
+Workers try DLab GPT-5.6 Sol, then NVIDIA GLM-5.3, followed by DLab free-key Space Bunny and Nemotron 3 Ultra. A nonzero `opencode run` exit moves to the next model; missing or expired DLab keys fail closed. After a successful run, the verification gate checks for a work product before the workflow opens a draft PR. DLab free-key models were trap-tested successfully; `atria-dawn-preview` was omitted because it returned 429 during testing. SiliconFlow GLM-5.3 was tested but is paid ($1.40/M input, $4.40/M output), so it is not configured.
 
 ## Reverting
 

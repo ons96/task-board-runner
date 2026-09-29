@@ -100,10 +100,7 @@ jobs:
           OPENCODE_CONFIG_CONTENT: ${{ steps.cfg.outputs.content }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           DLAB_API_KEY: ${{ secrets.DLAB_API_KEY }}
-          KIOSAPI_API_KEY: ${{ secrets.KIOSAPI_API_KEY }}
-          SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          DLAB_FREE_API_KEY: ${{ secrets.DLAB_FREE_API_KEY }}
           OPENCODE_DISABLE_DEFAULT_PLUGINS: '1'
           OPENCODE_DISABLE_EXTERNAL_SKILLS: '1'
           OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1'
@@ -120,10 +117,8 @@ jobs:
           PROVIDERS=(
             "dlab/gpt-5-6-sol"
             "nvidia/z-ai/glm-5.3"
-            "kiosapi/muse-spark-1.3-contributor"
-            "siliconflow/z-ai/glm-5.3"
-            "mistral/mistral-large-latest"
-            "together/meta-llama/Llama-3.3-70B-Instruct-Turbo"
+            "dlab-free/space-bunny"
+            "dlab-free/nemotron-3-ultra"
           )
           succeeded=0
           for MODEL in "${PROVIDERS[@]}"; do
