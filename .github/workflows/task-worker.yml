@@ -171,7 +171,7 @@ jobs:
       # which requeues the task instead of marking it done.
       # Always exits 0; the verdict is in steps.verify.outputs.verify_result
       # so a gate failure requeues instead of failing the whole job.
-      - name: Verify work product
+      - name: Verify agent run
         id: verify
         run: |
           set +e
@@ -196,8 +196,38 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           exit 0
 
+      # Work-product verify gate (task-board #932, the other half of
+      # task-board-loop's verify gate, PRs #13/#14): the #934 gate above
+      # rejects runs with no diff at all; this one rejects diffs that exist
+      # but are trivial — fewer than 2 files touched or 5 insertions vs
+      # origin/main, with lockfile+manifest bumps whitelisted
+      # (scripts/verify-work-product.sh). A failing verdict fails the job:
+      # Salvage banks the commit on the work branch and Release requeues the
+      # issue status:new with the reason, never status:done. Fails closed on
+      # unmeasurable diffs.
+      - name: Verify work product substance
+        id: substance
+        if: steps.changes.outputs.has_changes == 'true' && steps.verify.outputs.verify_result == 'pass'
+        working-directory: workspace
+        run: |
+          set +e
+          bash ../runner/scripts/verify-work-product.sh origin/main > /tmp/verify-gate.out
+          VERIFY_CODE=$?
+          set -e
+          cat /tmp/verify-gate.out
+          val() { grep -m1 "^$1=" /tmp/verify-gate.out | cut -d= -f2-; }
+          {
+            echo "verdict=$(val verdict)"
+            echo "files=$(val files)"
+            echo "insertions=$(val insertions)"
+            echo "reason<<VERIFY_REASON_EOF"
+            val reason || true
+            echo "VERIFY_REASON_EOF"
+          } >> "$GITHUB_OUTPUT"
+          exit "$VERIFY_CODE"
+
       - name: Push and create PR
-        if: steps.verify.outputs.verify_result == 'pass'
+        if: steps.verify.outputs.verify_result == 'pass' && steps.substance.outputs.verdict == 'pass'
         id: pr
         working-directory: workspace
         env:
@@ -212,7 +242,7 @@ jobs:
           echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
 
       - name: Mark task done
-        if: steps.verify.outputs.verify_result == 'pass'
+        if: steps.verify.outputs.verify_result == 'pass' && steps.substance.outputs.verdict == 'pass'
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -244,8 +274,15 @@ jobs:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           LOCK_LABEL: ${{ inputs.lock_label }}
+          VERIFY_RESULT: ${{ steps.verify.outputs.verify_result }}
+          VERIFY_REASON: ${{ steps.verify.outputs.verify_reason }}
+          SUBSTANCE_VERDICT: ${{ steps.substance.outputs.verdict }}
+          SUBSTANCE_REASON: ${{ steps.substance.outputs.reason }}
         run: |
-          if [ "${{ steps.verify.outputs.verify_result || 'fail' }}" = "pass" ] && [ "${{ job.status }}" = "success" ]; then
+          # Success only when both verify gates passed and the job is green.
+          if [ "${VERIFY_RESULT:-fail}" = "pass" ] \
+             && [ "${SUBSTANCE_VERDICT:-fail}" = "pass" ] \
+             && [ "${{ job.status }}" = "success" ]; then
             exit 0
           fi
           gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
@@ -254,11 +291,12 @@ jobs:
           REASON="unknown"
           if [ "${{ steps.changes.outputs.has_changes || 'false' }}" != "true" ]; then
             REASON="no changes"
+          elif [ "${SUBSTANCE_VERDICT:-}" = "fail" ]; then
+            REASON="work-product verify gate rejected the diff${SUBSTANCE_REASON:+ ($SUBSTANCE_REASON)}"
+          elif [ "${VERIFY_RESULT:-}" = "fail" ]; then
+            REASON="verification failed: ${VERIFY_REASON:-unknown}"
           elif [ "${{ job.status }}" != "success" ]; then
             REASON="job failed (${{ job.status }})"
-          else
-            # shellcheck disable=SC2016
-            REASON='verification failed: ${{ steps.verify.outputs.verify_reason }}'
           fi
           gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
             --body "Worker ${{ github.run_id }} released the task due to $REASON; re-queued for retry." \

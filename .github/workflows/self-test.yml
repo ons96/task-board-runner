@@ -26,10 +26,14 @@ jobs:
         run: |
           bash -n scripts/claim-task.sh
           bash -n scripts/verify-work.sh
+          bash -n scripts/verify-work-product.sh
           echo "shell syntax OK"
 
-      - name: Verify-gate false-done cases
+      - name: Verify-gate false-done cases (#934 log-substance gate)
         run: bash scripts/verify-work.sh --self-test
+
+      - name: Work-product gate fixtures (#932 diff-substance gate)
+        run: bash scripts/verify-work-product.sh --self-test
 
       - name: Workflow YAML validation
         run: |
