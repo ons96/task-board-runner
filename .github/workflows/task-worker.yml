@@ -261,7 +261,7 @@ jobs:
             REASON='verification failed: ${{ steps.verify.outputs.verify_reason }}'
           fi
           gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
-            --body "Worker ${{ github.run_id }} released the task due to $REASON; re-queued for retry." \
+            --body "Worker ${{ github.run_id }} released the task: failure_reason=$(bash runner/scripts/failure-reason.sh --classify \"$REASON\"); detail=$REASON; run=https://github.com/ons96/task-board-runner/actions/runs/${{ github.run_id }}" \
             2>/dev/null || true
 
       - name: Upload agent output
