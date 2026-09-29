@@ -43,6 +43,18 @@ jobs:
             echo "CFG_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Validate runner config
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          DLAB_API_KEY: ${{ secrets.DLAB_API_KEY }}
+          DLAB_FREE_API_KEY: ${{ secrets.DLAB_FREE_API_KEY }}
+        run: |
+          # No --check-model here: the default model is a temporary-credit
+          # provider; live availability is covered by the provider fallback
+          # loop below. This step catches schema and compaction-pin errors.
+          bash runner/scripts/validate-runner-config.sh \
+            runner/.github/runner-config.json
+
       - name: Authenticate gh CLI
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
