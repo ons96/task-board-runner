@@ -118,8 +118,8 @@ jobs:
           Commit incrementally (git add -A && git commit) every ~10 minutes or per completed unit, so partial progress survives step timeouts."
           : > ../agent-output.txt
           PROVIDERS=(
-            "nvidia/z-ai/glm-5.3"
             "dlab/gpt-5-6-sol"
+            "nvidia/z-ai/glm-5.3"
             "kiosapi/muse-spark-1.3-contributor"
             "siliconflow/z-ai/glm-5.3"
             "mistral/mistral-large-latest"
