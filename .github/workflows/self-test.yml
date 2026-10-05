@@ -33,6 +33,7 @@ jobs:
           bash -n scripts/verify-work.sh
           bash -n runner/scripts/provider-failure.sh
           python3 -m py_compile runner/scripts/provider-manifest.py
+          bash -n scripts/retry-budget.sh
           echo "shell syntax OK"
 
       - name: Provider manifest validation
@@ -43,6 +44,9 @@ jobs:
 
       - name: Verify-gate false-done cases
         run: bash scripts/verify-work.sh --self-test
+
+      - name: Retry budget
+        run: bash scripts/retry-budget.sh --self-test
 
       - name: Workflow YAML validation
         run: |
