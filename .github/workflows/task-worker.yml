@@ -44,6 +44,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate gh CLI
+        id: auth
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
         run: |
@@ -94,6 +95,7 @@ jobs:
           opencode --version || true
 
       - name: Run opencode on claimed issue
+        id: agent
         working-directory: workspace
         timeout-minutes: 40
         env:
@@ -144,7 +146,7 @@ jobs:
             exit 1
           fi
           if grep -qE '^  opencode (run|attach|serve) ' ../agent-output.txt; then
-            echo "ERROR: opencode printed CLI help instead of running."
+            echo "ERROR: opencode printed CLI help instead of running." | tee -a ../agent-output.txt
             exit 1
           fi
 
@@ -213,6 +215,7 @@ jobs:
 
       - name: Mark task done
         if: steps.verify.outputs.verify_result == 'pass'
+        id: done
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
