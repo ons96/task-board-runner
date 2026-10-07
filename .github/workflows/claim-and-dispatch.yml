@@ -12,7 +12,7 @@ on:
       max_tasks:
         description: Maximum tasks to dispatch this run
         required: false
-        default: '4'
+        default: '1'
 
 permissions:
   contents: read
@@ -50,8 +50,8 @@ jobs:
           echo "$STALE" | while read -r NUM UPDATED_AT; do
             [ -n "$NUM" ] || continue
             AGE=$(( NOW - $(date -u -d "$UPDATED_AT" +%s) ))
-            # Worker jobs can run for 45 minutes; 1 hour avoids releasing live work.
-            if [ "$AGE" -gt 3600 ]; then
+            # Serial workers can queue behind a 45-min job; 4h avoids releasing live work.
+            if [ "$AGE" -gt 14400 ]; then
               LOCK=$(gh issue view "$NUM" -R "$TASK_BOARD_REPO" --json labels \
                 --jq '[.labels[].name | select(startswith("locked-by:gha-"))] | .[0]' 2>/dev/null || true)
               [ -n "$LOCK" ] || continue
@@ -69,7 +69,7 @@ jobs:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
           TASK_BOARD_REPO: ons96/task-board
           TASK_ALLOWED_SCOPES: ${{ github.event.inputs.scope_filter || 'cross-device,github-actions' }}
-          MAX_TASKS: ${{ github.event.inputs.max_tasks || '4' }}
+          MAX_TASKS: ${{ github.event.inputs.max_tasks || '1' }}
         run: |
           set -euo pipefail
           MAX_TASKS=$((MAX_TASKS + 0))

@@ -20,7 +20,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: task-${{ inputs.issue_number }}
+  group: task-worker
   cancel-in-progress: false
 
 jobs:
@@ -35,13 +35,51 @@ jobs:
 
       - name: Load runner config
         id: cfg
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          DLAB_API_KEY: ${{ secrets.DLAB_API_KEY }}
+          DLAB_FREE_API_KEY: ${{ secrets.DLAB_FREE_API_KEY }}
+          GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
         run: |
-          CONTENT=$(cat runner/.github/runner-config.json)
+          CONTENT=$(python3 runner/scripts/provider-manifest.py \
+            --opencode-config runner/.github/runner-config.json \
+            --manifest runner/provider-manifest.json)
+          OPTIONAL_MODELS=$(python3 runner/scripts/provider-manifest.py \
+            --opencode-config runner/.github/runner-config.json \
+            --manifest runner/provider-manifest.json --models)
+          QUARANTINE=$(python3 runner/scripts/provider-manifest.py \
+            --opencode-config runner/.github/runner-config.json \
+            --manifest runner/provider-manifest.json --quarantine)
+          if [ -n "$QUARANTINE" ]; then
+            echo "$QUARANTINE" | while IFS= read -r REASON; do
+              [ -n "$REASON" ] || continue
+              echo "provider_manifest_skip $REASON" >> "$GITHUB_STEP_SUMMARY"
+              gh issue comment "${{ inputs.issue_number }}" -R ons96/task-board \
+                --body "provider_manifest_skip $REASON" 2>/dev/null || true
+            done
+          fi
           {
             echo "content<<CFG_EOF"
             echo "$CONTENT"
             echo "CFG_EOF"
           } >> "$GITHUB_OUTPUT"
+          {
+            echo 'optional_models<<MODELS_EOF'
+            echo "$OPTIONAL_MODELS"
+            echo 'MODELS_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate runner config
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          DLAB_API_KEY: ${{ secrets.DLAB_API_KEY }}
+          DLAB_FREE_API_KEY: ${{ secrets.DLAB_FREE_API_KEY }}
+        run: |
+          # No --check-model here: the default model is a temporary-credit
+          # provider; live availability is covered by the provider fallback
+          # loop below. This step catches schema and compaction-pin errors.
+          bash runner/scripts/validate-runner-config.sh \
+            runner/.github/runner-config.json
 
       - name: Authenticate gh CLI
         id: auth
@@ -99,13 +137,11 @@ jobs:
         working-directory: workspace
         timeout-minutes: 40
         env:
-          OPENCODE_CONFIG_CONTENT: ${{ steps.cfg.outputs.content }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           DLAB_API_KEY: ${{ secrets.DLAB_API_KEY }}
-          KIOSAPI_API_KEY: ${{ secrets.KIOSAPI_API_KEY }}
-          SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          DLAB_FREE_API_KEY: ${{ secrets.DLAB_FREE_API_KEY }}
+          OPENCODE_CONFIG_CONTENT: ${{ steps.cfg.outputs.content }}
+          RUNNER_OPTIONAL_MODELS: ${{ steps.cfg.outputs.optional_models }}
           OPENCODE_DISABLE_DEFAULT_PLUGINS: '1'
           OPENCODE_DISABLE_EXTERNAL_SKILLS: '1'
           OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1'
@@ -120,26 +156,29 @@ jobs:
           Commit incrementally (git add -A && git commit) every ~10 minutes or per completed unit, so partial progress survives step timeouts."
           : > ../agent-output.txt
           PROVIDERS=(
-            "nvidia/z-ai/glm-5.3"
             "dlab/gpt-5-6-sol"
-            "kiosapi/muse-spark-1.3-contributor"
-            "siliconflow/z-ai/glm-5.3"
-            "mistral/mistral-large-latest"
-            "together/meta-llama/Llama-3.3-70B-Instruct-Turbo"
+            "nvidia/z-ai/glm-5.3"
+            "dlab-free/space-bunny"
+            "dlab-free/nemotron-3-ultra"
           )
+          while IFS= read -r OPTIONAL_MODEL; do
+            [ -n "$OPTIONAL_MODEL" ] && PROVIDERS+=("$OPTIONAL_MODEL")
+          done <<< "$RUNNER_OPTIONAL_MODELS"
           succeeded=0
           for MODEL in "${PROVIDERS[@]}"; do
             echo "Attempting provider: $MODEL" | tee -a ../agent-output.txt
             set +e
-            opencode run --pure --model "$MODEL" "$PROMPT" 2>&1 | tee -a ../agent-output.txt
-            STATUS=${PIPESTATUS[0]}
+            opencode run --pure --model "$MODEL" "$PROMPT" > /tmp/provider-attempt.txt 2>&1
+            STATUS=$?
             set -e
+            cat /tmp/provider-attempt.txt | tee -a ../agent-output.txt
             if [ "$STATUS" -eq 0 ]; then
               succeeded=1
               echo "Provider succeeded: $MODEL" | tee -a ../agent-output.txt
               break
             fi
-            echo "Provider failed ($STATUS): $MODEL; trying next fallback" | tee -a ../agent-output.txt
+            FAILURE_KIND=$(bash ../runner/scripts/provider-failure.sh --classify "$(cat /tmp/provider-attempt.txt)")
+            echo "provider_failure kind=$FAILURE_KIND model=$MODEL status=$STATUS fallback=next" | tee -a ../agent-output.txt
           done
           if [ "$succeeded" -ne 1 ]; then
             echo "ERROR: all configured providers failed" | tee -a ../agent-output.txt
@@ -224,6 +263,9 @@ jobs:
           gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
             --remove-label status:in_progress --add-label status:done \
             --remove-label "$LOCK_LABEL" || true
+          for OLD in $(gh issue view "$ISSUE_NUMBER" -R ons96/task-board --json labels --jq '.labels[].name | select(startswith("attempts:") or . == "retry-exhausted")' 2>/dev/null || true); do
+            gh issue edit "$ISSUE_NUMBER" -R ons96/task-board --remove-label "$OLD" >/dev/null 2>&1 || true
+          done
           if [ -n "${{ steps.pr.outputs.pr_url }}" ]; then
             gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
               --body "Opened PR: ${{ steps.pr.outputs.pr_url }}" || true
@@ -247,13 +289,32 @@ jobs:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           LOCK_LABEL: ${{ inputs.lock_label }}
+          MAX_RETRIES: ${{ vars.RETRY_BUDGET_MAX }}
         run: |
           if [ "${{ steps.verify.outputs.verify_result || 'fail' }}" = "pass" ] && [ "${{ job.status }}" = "success" ]; then
             exit 0
           fi
-          gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
-            --remove-label status:in_progress --add-label status:new \
-            --remove-label "$LOCK_LABEL" 2>/dev/null || true
+          MAX_RETRIES="${MAX_RETRIES:-2}"
+          ATTEMPTS=$(gh issue view "$ISSUE_NUMBER" -R ons96/task-board --json labels \
+            --jq '[.labels[].name | select(startswith("attempts:")) | sub("^attempts:"; "") | tonumber] | max // 0' 2>/dev/null || echo 0)
+          NEXT_ATTEMPTS=$((ATTEMPTS + 1))
+          gh label create "attempts:$NEXT_ATTEMPTS" -R ons96/task-board --color BFD4F2 >/dev/null 2>&1 || true
+          for OLD in $(gh issue view "$ISSUE_NUMBER" -R ons96/task-board --json labels --jq '.labels[].name | select(startswith("attempts:"))' 2>/dev/null || true); do
+            [ "$OLD" != "attempts:$NEXT_ATTEMPTS" ] && gh issue edit "$ISSUE_NUMBER" -R ons96/task-board --remove-label "$OLD" >/dev/null 2>&1 || true
+          done
+          if [ "$(bash runner/scripts/retry-budget.sh --state "$NEXT_ATTEMPTS" "$MAX_RETRIES")" = blocked ]; then
+            gh label create retry-exhausted -R ons96/task-board --color B60205 >/dev/null 2>&1 || true
+            gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
+              --remove-label status:in_progress --add-label status:blocked \
+              --remove-label "$LOCK_LABEL" --add-label retry-exhausted \
+              --add-label "attempts:$NEXT_ATTEMPTS" 2>/dev/null || true
+            REQUEUE_STATE="blocked after $NEXT_ATTEMPTS attempts"
+          else
+            gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
+              --remove-label status:in_progress --add-label status:new \
+              --remove-label "$LOCK_LABEL" --add-label "attempts:$NEXT_ATTEMPTS" 2>/dev/null || true
+            REQUEUE_STATE="re-queued attempt $NEXT_ATTEMPTS/$MAX_RETRIES"
+          fi
           REASON="unknown"
           if [ "${{ steps.changes.outputs.has_changes || 'false' }}" != "true" ]; then
             REASON="no changes"
@@ -264,7 +325,11 @@ jobs:
             REASON='verification failed: ${{ steps.verify.outputs.verify_reason }}'
           fi
           gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
+<<<<<<< HEAD
             --body "Worker ${{ github.run_id }} released the task: failure_reason=$(bash runner/scripts/failure-reason.sh --classify \"$REASON\"); detail=$REASON; run=https://github.com/ons96/task-board-runner/actions/runs/${{ github.run_id }}" \
+=======
+            --body "Worker ${{ github.run_id }} $REQUEUE_STATE: $REASON; run=https://github.com/ons96/task-board-runner/actions/runs/${{ github.run_id }}" \
+>>>>>>> main
             2>/dev/null || true
 
       - name: Upload agent output
