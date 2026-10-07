@@ -60,7 +60,7 @@ GitHub → Actions tab → `Claim and Run Task` → `Run workflow` → optional 
 
 The worker resumes an existing `work/<issue>` branch when present. Failed or no-change runs requeue the issue and preserve partial branch work. Do not manually delete a work branch while a worker is active.
 
-For a local preflight, run `bash scripts/claim-task.sh --help`, `bash scripts/verify-work.sh --self-test`, and the shell/YAML checks used by `Runner Self-Test`. Never paste tokens into issue text, workflow files, or commits.
+For a local preflight, run `bash -n scripts/claim-task.sh`, `bash scripts/verify-work.sh --self-test`, and the shell/YAML checks used by `Runner Self-Test`. Do not run `claim-task.sh` with an authenticated `gh` unless you intend to claim real issues. Never paste tokens into issue text, workflow files, or commits. Full guide: [docs/ADDING-A-WORKER.md](docs/ADDING-A-WORKER.md).
 
 ## Costs
 
