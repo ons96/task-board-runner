@@ -5,10 +5,12 @@ on:
     paths:
       - 'scripts/**'
       - '.github/workflows/**'
+      - 'docs/**'
   pull_request:
     paths:
       - 'scripts/**'
       - '.github/workflows/**'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
@@ -33,7 +35,9 @@ jobs:
         run: bash scripts/verify-work.sh --self-test
 
       - name: Merge policy checks
-        run: bash scripts/check-merge-policy.sh
+        run: |
+          bash scripts/check-merge-policy.sh
+          bash scripts/check-merge-policy.sh --self-test
 
       - name: Workflow YAML validation
         run: |

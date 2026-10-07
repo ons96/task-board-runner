@@ -14,6 +14,10 @@ Private repos get 2000 Actions minutes/month; public repos get unlimited. The ru
 4. Each worker clones the target repo on `work/$ISSUE_NUM`, runs opencode, pushes the branch, and opens a draft PR.
 5. Issue locks survive dispatcher exit; workers release them on success, failure, or no-change paths.
 
+## Merge policy
+
+This runner never auto-merges PRs. [`docs/auto-merge-policy.md`](docs/auto-merge-policy.md) defines the one narrow category (docs-only `.md`/`.markdown`/`.txt` diffs) a maintainer may enable for unreviewed merges; code, workflow, config, dependency, and secret-like changes always keep their review gate, and labels never expand the allowed set. `scripts/check-merge-policy.sh --files-from <changed-files>` classifies a diff offline, and `--self-test` runs the representative cases in the self-test workflow.
+
 ## LLM providers used
 
 Runner cannot reach the VPS-40 gateway (Tailscale-only) so it uses free DIRECT providers committed in `.github/runner-config.json`:
