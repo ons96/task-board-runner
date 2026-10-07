@@ -82,6 +82,7 @@ jobs:
             runner/.github/runner-config.json
 
       - name: Authenticate gh CLI
+        id: auth
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
         run: |
@@ -132,6 +133,7 @@ jobs:
           opencode --version || true
 
       - name: Run opencode on claimed issue
+        id: agent
         working-directory: workspace
         timeout-minutes: 40
         env:
@@ -183,7 +185,7 @@ jobs:
             exit 1
           fi
           if grep -qE '^  opencode (run|attach|serve) ' ../agent-output.txt; then
-            echo "ERROR: opencode printed CLI help instead of running."
+            echo "ERROR: opencode printed CLI help instead of running." | tee -a ../agent-output.txt
             exit 1
           fi
 
@@ -252,6 +254,7 @@ jobs:
 
       - name: Mark task done
         if: steps.verify.outputs.verify_result == 'pass'
+        id: done
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -322,7 +325,11 @@ jobs:
             REASON='verification failed: ${{ steps.verify.outputs.verify_reason }}'
           fi
           gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
+<<<<<<< HEAD
+            --body "Worker ${{ github.run_id }} released the task: failure_reason=$(bash runner/scripts/failure-reason.sh --classify \"$REASON\"); detail=$REASON; run=https://github.com/ons96/task-board-runner/actions/runs/${{ github.run_id }}" \
+=======
             --body "Worker ${{ github.run_id }} $REQUEUE_STATE: $REASON; run=https://github.com/ons96/task-board-runner/actions/runs/${{ github.run_id }}" \
+>>>>>>> main
             2>/dev/null || true
 
       - name: Upload agent output

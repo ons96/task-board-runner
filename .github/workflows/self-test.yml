@@ -31,6 +31,7 @@ jobs:
         run: |
           bash -n scripts/claim-task.sh
           bash -n scripts/verify-work.sh
+          bash -n scripts/failure-reason.sh
           bash -n runner/scripts/provider-failure.sh
           python3 -m py_compile runner/scripts/provider-manifest.py
           bash -n scripts/retry-budget.sh
@@ -44,6 +45,9 @@ jobs:
 
       - name: Verify-gate false-done cases
         run: bash scripts/verify-work.sh --self-test
+
+      - name: Failure taxonomy
+        run: bash scripts/failure-reason.sh --self-test
 
       - name: Retry budget
         run: bash scripts/retry-budget.sh --self-test
