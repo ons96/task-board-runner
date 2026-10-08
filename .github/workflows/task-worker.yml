@@ -163,8 +163,10 @@ jobs:
             [ -n "$OPTIONAL_MODEL" ] && PROVIDERS+=("$OPTIONAL_MODEL")
           done <<< "$RUNNER_OPTIONAL_MODELS"
           succeeded=0
+          rate_limit_streak=0
           for MODEL in "${PROVIDERS[@]}"; do
             echo "Attempting provider: $MODEL" | tee -a ../agent-output.txt
+            : > ../provider-attempt.txt
             set +e
             opencode run --pure --model "$MODEL" "$PROMPT" > /tmp/provider-attempt.txt 2>&1
             STATUS=$?
@@ -175,8 +177,17 @@ jobs:
               echo "Provider succeeded: $MODEL" | tee -a ../agent-output.txt
               break
             fi
-            FAILURE_KIND=$(bash ../runner/scripts/provider-failure.sh --classify "$(cat /tmp/provider-attempt.txt)")
-            echo "provider_failure kind=$FAILURE_KIND model=$MODEL status=$STATUS fallback=next" | tee -a ../agent-output.txt
+            FAILURE_KIND=$(bash ../runner/scripts/provider-failure.sh --classify "$(cat /tmp/provider-attempt.txt)" 2>/dev/null || true)
+            FAILURE_KIND=${FAILURE_KIND:-provider_error}
+            if [ "$FAILURE_KIND" = "rate_limited" ]; then
+              rate_limit_streak=$((rate_limit_streak + 1))
+              BACKOFF=$(bash ../runner/scripts/provider-failure.sh --backoff "$rate_limit_streak")
+              echo "provider_failure kind=$FAILURE_KIND model=$MODEL status=$STATUS backoff_seconds=$BACKOFF" | tee -a ../agent-output.txt
+              sleep "$BACKOFF"
+            else
+              rate_limit_streak=0
+              echo "provider_failure kind=$FAILURE_KIND model=$MODEL status=$STATUS backoff_seconds=0" | tee -a ../agent-output.txt
+            fi
           done
           if [ "$succeeded" -ne 1 ]; then
             echo "ERROR: all configured providers failed" | tee -a ../agent-output.txt

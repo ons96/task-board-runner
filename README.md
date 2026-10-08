@@ -36,6 +36,8 @@ Workers use the stable configured chain above. Valid temporary providers are app
 
 Each entry specifies `id`, `model`, HTTPS `base_url`, `credential_env` (secret name only), timezone-qualified `expires_at`, numeric `fallback_position`, and `free_tier: true`. The loader skips expired, non-free, or uncredentialed entries and merges eligible provider metadata into the OpenCode config without printing secret values. A manifest entry's `credential_env` must name a secret that is already passed to the workflow's `Load runner config` and `Run opencode` steps. Use `python3 scripts/provider-manifest.py --self-test` before onboarding; remove an entry to retire it. Runtime failures continue through the static fallback chain; GitHub secret rotation is manual and requires approval.
 
+Provider failures are logged as `provider_failure` records without response bodies or credentials. Rate limits are classified separately and use bounded 1s/5s/25s/30s backoff before the next approved provider; auth failures are not retried against the same provider.
+
 ## Reverting
 
 ```bash
