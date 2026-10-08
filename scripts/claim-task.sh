@@ -107,6 +107,13 @@ for prio_label in "${PRIORITY_ORDER[@]}"; do
         break
       fi
     done
+    if [[ "$PROJECT" == "unknown" ]]; then
+      echo "Issue #$ISSUE_NUM has no project label, skipping" >&2
+      gh issue edit "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
+        --remove-label "status:in_progress" --add-label "status:new" \
+        --remove-label "$LOCK_LABEL" >/dev/null 2>&1 || true
+      continue
+    fi
 
     gh issue comment "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
       --body "Claimed by \`${WORKER_ID}\` at $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >/dev/null 2>&1 || true
