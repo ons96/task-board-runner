@@ -332,8 +332,25 @@ jobs:
             # shellcheck disable=SC2016
             REASON='verification failed: ${{ steps.verify.outputs.verify_reason }}'
           fi
+          # Canonical failure class (#936): one stable label + one-line cause.
+          # The classifier only ever emits the class name, never log contents.
+          FAIL_CLASS=$(bash runner/scripts/failure-taxonomy.sh --classify \
+            --log agent-output.txt \
+            --verify-reason "${{ steps.verify.outputs.verify_reason || 'unknown' }}" \
+            --job-status "${{ job.status }}" \
+            --has-changes "${{ steps.changes.outputs.has_changes || 'false' }}" \
+            2>/dev/null || true)
+          FAIL_CLASS=$(echo "$FAIL_CLASS" | head -1)
+          [ -n "$FAIL_CLASS" ] || FAIL_CLASS=infrastructure
+          FAIL_LABEL=$(bash runner/scripts/failure-taxonomy.sh --label "$FAIL_CLASS" 2>/dev/null || echo "runner-fail:infrastructure")
+          gh label create "$FAIL_LABEL" -R ons96/task-board --color B60205 >/dev/null 2>&1 || true
+          for OLD_CLASS in $(gh issue view "$ISSUE_NUMBER" -R ons96/task-board --json labels \
+            --jq '.labels[].name | select(startswith("runner-fail:"))' 2>/dev/null || true); do
+            [ "$OLD_CLASS" != "$FAIL_LABEL" ] && gh issue edit "$ISSUE_NUMBER" -R ons96/task-board --remove-label "$OLD_CLASS" >/dev/null 2>&1 || true
+          done
+          gh issue edit "$ISSUE_NUMBER" -R ons96/task-board --add-label "$FAIL_LABEL" >/dev/null 2>&1 || true
           gh issue comment "$ISSUE_NUMBER" -R ons96/task-board \
-            --body "Worker ${{ github.run_id }} $REQUEUE_STATE: $REASON; run=https://github.com/ons96/task-board-runner/actions/runs/${{ github.run_id }}" \
+            --body "Worker ${{ github.run_id }} $REQUEUE_STATE: $REASON; failure_class=$FAIL_CLASS; run=https://github.com/ons96/task-board-runner/actions/runs/${{ github.run_id }}" \
             2>/dev/null || true
 
       - name: Upload agent output
