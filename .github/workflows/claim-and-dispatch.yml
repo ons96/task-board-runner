@@ -44,24 +44,36 @@ jobs:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
         run: |
           NOW=$(date +%s)
+          LEASE_TTL="${LEASE_TTL:-14400}"
           STALE=$(gh issue list -R "$TASK_BOARD_REPO" --state open --label "status:in_progress" --limit 100 \
             --json number,updatedAt,labels \
-            --jq '.[] | select(any(.labels[]; (.name | startswith("locked-by:gha-")))) | "\(.number) \(.updatedAt)"' 2>/dev/null || true)
-          echo "$STALE" | while read -r NUM UPDATED_AT; do
+            --jq '.[] | select(any(.labels[]; (.name | startswith("locked-by:gha-")))) | "\(.number) \(.updatedAt) \([.labels[] | select(startswith("lease:")) | .name][0] // "")"' 2>/dev/null || true)
+          echo "$STALE" | while read -r NUM UPDATED_AT LEASE; do
             [ -n "$NUM" ] || continue
-            AGE=$(( NOW - $(date -u -d "$UPDATED_AT" +%s) ))
-            # Serial workers can queue behind a 45-min job; 4h avoids releasing live work.
-            if [ "$AGE" -gt 14400 ]; then
-              LOCK=$(gh issue view "$NUM" -R "$TASK_BOARD_REPO" --json labels \
-                --jq '[.labels[].name | select(startswith("locked-by:gha-"))] | .[0]' 2>/dev/null || true)
-              [ -n "$LOCK" ] || continue
-              gh issue edit "$NUM" -R "$TASK_BOARD_REPO" \
-                --remove-label "status:in_progress" --add-label "status:new" \
-                --remove-label "$LOCK" >/dev/null 2>&1 || true
-              gh issue comment "$NUM" -R "$TASK_BOARD_REPO" \
-                --body "Sweeper released stale lock \`${LOCK}\` (age ${AGE}s). Re-queued as status:new." \
-                >/dev/null 2>&1 || true
+            if [ -n "$LEASE" ]; then
+              # Deterministic lease rule (#937): release only when the lease
+              # marker is provably past the documented timeout. A fresh lease
+              # belongs to a healthy worker and is never released.
+              EPOCH=$(bash runner/scripts/lock-lease.sh --parse "$LEASE" 2>/dev/null || true)
+              STATE=$(bash runner/scripts/lock-lease.sh --state "$EPOCH" "$NOW" "$LEASE_TTL" 2>/dev/null || echo invalid)
+              [ "$STATE" = "expired" ] || continue
+              AGE=$(( NOW - EPOCH ))
+            else
+              # legacy locks without a lease marker: keep the updatedAt rule
+              AGE=$(( NOW - $(date -u -d "$UPDATED_AT" +%s) ))
+              # Serial workers can queue behind a 45-min job; 4h avoids releasing live work.
+              [ "$AGE" -gt "$LEASE_TTL" ] || continue
             fi
+            LOCK=$(gh issue view "$NUM" -R "$TASK_BOARD_REPO" --json labels \
+              --jq '[.labels[].name | select(startswith("locked-by:gha-"))] | .[0]' 2>/dev/null || true)
+            [ -n "$LOCK" ] || continue
+            gh issue edit "$NUM" -R "$TASK_BOARD_REPO" \
+              --remove-label "status:in_progress" --add-label "status:new" \
+              --remove-label "$LOCK" >/dev/null 2>&1 || true
+            [ -n "$LEASE" ] && gh issue edit "$NUM" -R "$TASK_BOARD_REPO" --remove-label "$LEASE" >/dev/null 2>&1 || true
+            gh issue comment "$NUM" -R "$TASK_BOARD_REPO" \
+              --body "Sweeper released stale lock \`${LOCK}\` (lease age ${AGE}s, marker ${LEASE:-none}). Re-queued as status:new." \
+              >/dev/null 2>&1 || true
           done
 
       - name: Claim and dispatch workers
