@@ -37,6 +37,7 @@ jobs:
           bash -n scripts/failure-taxonomy.sh
           bash -n scripts/lock-lease.sh
           bash -n scripts/claim-task.sh
+          bash -n scripts/merge-policy.sh
           echo "shell syntax OK"
 
       - name: Provider manifest validation
@@ -56,6 +57,9 @@ jobs:
 
       - name: Lock leases
         run: bash scripts/lock-lease.sh --self-test
+
+      - name: Merge policy
+        run: bash scripts/merge-policy.sh --self-test
 
       - name: Workflow YAML validation
         run: |
