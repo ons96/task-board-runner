@@ -38,6 +38,10 @@ Each entry specifies `id`, `model`, HTTPS `base_url`, `credential_env` (secret n
 
 Provider failures are logged as `provider_failure` records without response bodies or credentials. Rate limits are classified separately and use bounded 1s/5s/25s/30s backoff before the next approved provider; auth failures are not retried against the same provider.
 
+## Failure taxonomy
+
+Every non-success worker run is classified by `scripts/failure-taxonomy.sh` into one canonical class from a closed set — `auth`, `provider`, `timeout`, `validation`, `test`, `no_change`, `lock`, `infrastructure` — so triage reads labels instead of run logs. Classification uses structured signals first (has-changes, verify-gate reason, job status), then a bounded NUL-safe grep of the agent log; the classifier emits only the class name, never log contents or secrets. The class is recorded as a `runner-fail:<class>` label on the issue (stale `runner-fail:*` labels are replaced on failure and cleared on success) and the requeue comment carries `failure_class=<class>` next to the one-line cause and run URL. Run `bash scripts/failure-taxonomy.sh --self-test` for the offline fixture set (one case per class).
+
 ## Reverting
 
 ```bash
