@@ -271,6 +271,10 @@ jobs:
           gh issue edit "$ISSUE_NUMBER" -R ons96/task-board \
             --remove-label status:in_progress --add-label status:done \
             --remove-label "$LOCK_LABEL" || true
+          # Release the lock lease (#937); idempotent on cancel/failure paths.
+          for OLD_LEASE in $(gh issue view "$ISSUE_NUMBER" -R ons96/task-board --json labels --jq '.labels[].name | select(startswith("lease:"))' 2>/dev/null || true); do
+            gh issue edit "$ISSUE_NUMBER" -R ons96/task-board --remove-label "$OLD_LEASE" >/dev/null 2>&1 || true
+          done
           for OLD in $(gh issue view "$ISSUE_NUMBER" -R ons96/task-board --json labels --jq '.labels[].name | select(startswith("attempts:") or startswith("runner-fail:") or . == "retry-exhausted")' 2>/dev/null || true); do
             gh issue edit "$ISSUE_NUMBER" -R ons96/task-board --remove-label "$OLD" >/dev/null 2>&1 || true
           done
@@ -323,6 +327,11 @@ jobs:
               --remove-label "$LOCK_LABEL" --add-label "attempts:$NEXT_ATTEMPTS" 2>/dev/null || true
             REQUEUE_STATE="re-queued attempt $NEXT_ATTEMPTS/$MAX_RETRIES"
           fi
+          # Release the lock lease (#937); removing a missing lease is a no-op,
+          # so cancel and failure paths stay idempotent.
+          for OLD_LEASE in $(gh issue view "$ISSUE_NUMBER" -R ons96/task-board --json labels --jq '.labels[].name | select(startswith("lease:"))' 2>/dev/null || true); do
+            gh issue edit "$ISSUE_NUMBER" -R ons96/task-board --remove-label "$OLD_LEASE" >/dev/null 2>&1 || true
+          done
           REASON="unknown"
           if [ "${{ steps.changes.outputs.has_changes || 'false' }}" != "true" ]; then
             REASON="no changes"

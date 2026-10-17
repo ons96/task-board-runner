@@ -35,6 +35,8 @@ jobs:
           python3 -m py_compile runner/scripts/provider-manifest.py
           bash -n scripts/retry-budget.sh
           bash -n scripts/failure-taxonomy.sh
+          bash -n scripts/lock-lease.sh
+          bash -n scripts/claim-task.sh
           echo "shell syntax OK"
 
       - name: Provider manifest validation
@@ -51,6 +53,9 @@ jobs:
 
       - name: Failure taxonomy
         run: bash scripts/failure-taxonomy.sh --self-test
+
+      - name: Lock leases
+        run: bash scripts/lock-lease.sh --self-test
 
       - name: Workflow YAML validation
         run: |

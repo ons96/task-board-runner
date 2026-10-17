@@ -115,6 +115,17 @@ for prio_label in "${PRIORITY_ORDER[@]}"; do
       continue
     fi
 
+    # Timestamped lease (#937): record an unambiguous acquisition marker so
+    # sweeps free half-alive workers by lease age instead of guessing from
+    # updatedAt. Fresh leases are never released; workers release/renew.
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    LEASE_LABEL="$(bash "$SCRIPT_DIR/lock-lease.sh" --mark 2>/dev/null || true)"
+    if [[ -n "$LEASE_LABEL" ]]; then
+      gh label create "$LEASE_LABEL" -R "$TASK_BOARD_REPO" --color "BFD4F2" >/dev/null 2>&1 || true
+      gh issue edit "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
+        --add-label "$LEASE_LABEL" >/dev/null 2>&1 || true
+    fi
+
     gh issue comment "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
       --body "Claimed by \`${WORKER_ID}\` at $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >/dev/null 2>&1 || true
 
