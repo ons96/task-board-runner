@@ -1,27 +1,46 @@
 {
-  "$schema_version": 1,
-  "comment": "Free-LLM provider rotation for the task worker. A run picks a rotating subset instead of always starting on the same provider, so no single free key gets hammered. 'sensitive' providers (small operators that disable keys for overuse) sort last and never lead a run. Weights only influence ordering frequency, not quotas. Only providers defined in .github/runner-config.json can be listed here.",
+  "$schema_version": 2,
+  "comment": "Free-LLM provider rotation for the task worker. A run picks a rotating subset instead of always starting on the same provider, so no single free key gets hammered. Quality gate: a provider is only eligible if it has a measured agentic-coding score at or above min_agentic_coding_score. Unscored models are excluded (fail closed) - an autonomous agent on an unmeasured model can confidently ship wrong work. 'sensitive' providers (small operators that disable keys for overuse) sort last and never lead a run.",
+  "min_agentic_coding_score": 50,
+  "score_source": "llm-leaderboard-aggregate db/models.db -> models_unique.avg_agentic_coding_score",
+  "score_snapshot": "2026-08-16",
   "max_attempts_per_run": 2,
   "attempt_timeout_seconds": 900,
   "providers": [
     {
-      "id": "nvidia-glm",
-      "model": "nvidia/z-ai/glm-5.3",
+      "id": "nvidia-gpt-oss-20b",
+      "model": "nvidia/openai/gpt-oss-20b",
+      "scored_model_id": "openai/gpt-oss-20b",
+      "score": 61.08,
       "weight": 3,
       "sensitive": false,
       "enabled": true
     },
     {
+      "id": "nvidia-glm-5-3",
+      "model": "nvidia/z-ai/glm-5.3",
+      "scored_model_id": "glm-5-3",
+      "score": null,
+      "weight": 1,
+      "sensitive": false,
+      "enabled": false,
+      "note": "GLM-5.3 (released 2026-08-14) has no measured agentic-coding score in the 2026-08-16 snapshot. Re-enable only after a score is recorded at or above the threshold."
+    },
+    {
       "id": "dlab-sol",
       "model": "dlab/gpt-5-6-sol",
+      "scored_model_id": "gpt-5-6-sol",
+      "score": null,
       "weight": 1,
       "sensitive": true,
       "enabled": false,
-      "note": "Key expired 2026-10-01 after CI overuse; disabled by the provider owner 2026-10. Do not re-enable without a quota check."
+      "note": "Key expired 2026-10-01 after CI overuse; disabled by the provider owner. Do not re-enable without a quota check and a recorded score."
     },
     {
       "id": "dlab-free-bunny",
       "model": "dlab-free/space-bunny",
+      "scored_model_id": "space-bunny",
+      "score": null,
       "weight": 1,
       "sensitive": true,
       "enabled": false,
@@ -30,6 +49,8 @@
     {
       "id": "dlab-free-nemotron",
       "model": "dlab-free/nemotron-3-ultra",
+      "scored_model_id": "nemotron-3-ultra",
+      "score": null,
       "weight": 1,
       "sensitive": true,
       "enabled": false,
