@@ -1,44 +1,65 @@
 {
-  "$schema_version": 2,
-  "comment": "Free-LLM provider rotation for the task worker. A run picks a rotating subset instead of always starting on the same provider, so no single free key gets hammered. Quality gate: a provider is only eligible if it has a measured agentic-coding score at or above min_agentic_coding_score. Unscored models are excluded (fail closed) - an autonomous agent on an unmeasured model can confidently ship wrong work. 'sensitive' providers (small operators that disable keys for overuse) sort last and never lead a run.",
-  "min_agentic_coding_score": 50,
-  "score_source": "llm-leaderboard-aggregate db/models.db -> models_unique.avg_agentic_coding_score",
-  "score_snapshot": "2026-08-16",
+  "$schema_version": 3,
+  "comment": "Free-LLM provider rotation for the task worker. Two gates, both fail-closed. (1) Human approval: a provider may only run agentic work when tier is 'approved'. The numeric score is advisory because the blended agentic score misranks models: in the 2026-08-16 snapshot gpt-oss-20b scores 61.1 while MiniMax-M3 scores 42.1, which does not match their real agentic-coding behaviour. (2) Numeric floor: the score must still meet min_agentic_coding_score (set to MiniMax-M3's measured 42.1, the stated quality bar). Providers marked 'utility' are fine for short non-agentic jobs (titles, summaries) and are never selected for issue implementation.",
+  "quality_policy": {
+    "require_tier": "approved",
+    "min_agentic_coding_score": 42.1,
+    "min_benchmark_coverage": 2,
+    "score_source": "llm-leaderboard-aggregate db/models.db -> models_unique.avg_agentic_coding_score",
+    "score_snapshot": "2026-08-16",
+    "note": "Blended percentages mix incompatible benchmarks, so they are necessary but not sufficient. Approval requires a review of the underlying benchmark columns and real-world agentic results."
+  },
   "max_attempts_per_run": 2,
   "attempt_timeout_seconds": 900,
   "providers": [
     {
       "id": "nvidia-gpt-oss-20b",
       "model": "nvidia/openai/gpt-oss-20b",
-      "scored_model_id": "openai/gpt-oss-20b",
+      "tier": "utility",
+      "scored_model_id": "gpt-oss-20b",
       "score": 61.08,
+      "benchmarks": {
+        "swe_bench_verified_pct": null,
+        "swerebench_pct": null,
+        "livecodebench_pct": 77.7,
+        "coverage": 2,
+        "release_date": "2025-08-06"
+      },
       "weight": 3,
       "sensitive": false,
-      "enabled": true
+      "enabled": true,
+      "note": "Rejected by the owner for agentic coding: old and unreliable on multi-step work despite the blended score. Allowed only for short utility tasks in a different context."
     },
     {
       "id": "nvidia-glm-5-3",
       "model": "nvidia/z-ai/glm-5.3",
+      "tier": "blocked",
       "scored_model_id": "glm-5-3",
       "score": null,
+      "benchmarks": {
+        "coverage": 1,
+        "release_date": "2026-08-14"
+      },
       "weight": 1,
       "sensitive": false,
       "enabled": false,
-      "note": "GLM-5.3 (released 2026-08-14) has no measured agentic-coding score in the 2026-08-16 snapshot. Re-enable only after a score is recorded at or above the threshold."
+      "note": "No measured agentic-coding score in the snapshot. Candidate for approval once scored."
     },
     {
       "id": "dlab-sol",
       "model": "dlab/gpt-5-6-sol",
+      "tier": "blocked",
       "scored_model_id": "gpt-5-6-sol",
       "score": null,
       "weight": 1,
       "sensitive": true,
       "enabled": false,
-      "note": "Key expired 2026-10-01 after CI overuse; disabled by the provider owner. Do not re-enable without a quota check and a recorded score."
+      "note": "Key expired 2026-10-01 after CI overuse; disabled by the provider owner."
     },
     {
       "id": "dlab-free-bunny",
       "model": "dlab-free/space-bunny",
+      "tier": "blocked",
       "scored_model_id": "space-bunny",
       "score": null,
       "weight": 1,
@@ -49,6 +70,7 @@
     {
       "id": "dlab-free-nemotron",
       "model": "dlab-free/nemotron-3-ultra",
+      "tier": "blocked",
       "scored_model_id": "nemotron-3-ultra",
       "score": null,
       "weight": 1,
