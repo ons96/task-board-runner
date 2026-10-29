@@ -44,7 +44,11 @@ def rank(seed: str, provider_id: str, weight: int) -> str:
 
 
 def eligibility(
-    provider: dict, min_score: float, require_tier: str, excluded: set[str]
+    provider: dict,
+    min_score: float,
+    require_tier: str,
+    min_coverage: int,
+    excluded: set[str],
 ) -> tuple[bool, str]:
     pid = provider.get("id", "<missing-id>")
     if not provider.get("enabled", True):
@@ -54,6 +58,9 @@ def eligibility(
     tier = provider.get("tier", "blocked")
     if tier != require_tier:
         return False, f"tier={tier} (requires {require_tier})"
+    coverage = int((provider.get("benchmarks") or {}).get("coverage", 0))
+    if coverage < min_coverage:
+        return False, f"benchmark coverage {coverage} < {min_coverage}"
     score = provider.get("score")
     if score is None:
         return False, "no measured quality score (fail closed)"
@@ -85,11 +92,12 @@ def main() -> int:
         return 2
     min_score = float(quality["min_agentic_coding_score"])
     require_tier = str(quality.get("require_tier", "approved"))
+    min_coverage = int(quality.get("min_benchmark_coverage", 0))
     excluded = set(args.exclude)
 
     eligible: list[dict] = []
     for provider in policy.get("providers", []):
-        ok, reason = eligibility(provider, min_score, require_tier, excluded)
+        ok, reason = eligibility(provider, min_score, require_tier, min_coverage, excluded)
         if args.explain:
             print(f"  {provider.get('id', '?'):24} {'ELIGIBLE' if ok else 'skip':8} {reason}", file=sys.stderr)
         if ok:
