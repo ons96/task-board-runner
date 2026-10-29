@@ -1,0 +1,39 @@
+{
+  "$schema_version": 1,
+  "comment": "Free-LLM provider rotation for the task worker. A run picks a rotating subset instead of always starting on the same provider, so no single free key gets hammered. 'sensitive' providers (small operators that disable keys for overuse) sort last and never lead a run. Weights only influence ordering frequency, not quotas. Only providers defined in .github/runner-config.json can be listed here.",
+  "max_attempts_per_run": 2,
+  "attempt_timeout_seconds": 900,
+  "providers": [
+    {
+      "id": "nvidia-glm",
+      "model": "nvidia/z-ai/glm-5.3",
+      "weight": 3,
+      "sensitive": false,
+      "enabled": true
+    },
+    {
+      "id": "dlab-sol",
+      "model": "dlab/gpt-5-6-sol",
+      "weight": 1,
+      "sensitive": true,
+      "enabled": false,
+      "note": "Key expired 2026-10-01 after CI overuse; disabled by the provider owner 2026-10. Do not re-enable without a quota check."
+    },
+    {
+      "id": "dlab-free-bunny",
+      "model": "dlab-free/space-bunny",
+      "weight": 1,
+      "sensitive": true,
+      "enabled": false,
+      "note": "Key disabled 2026-10 after CI overuse."
+    },
+    {
+      "id": "dlab-free-nemotron",
+      "model": "dlab-free/nemotron-3-ultra",
+      "weight": 1,
+      "sensitive": true,
+      "enabled": false,
+      "note": "Key disabled 2026-10 after CI overuse."
+    }
+  ]
+}
