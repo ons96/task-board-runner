@@ -7,6 +7,9 @@ eventually disabled) while the other configured providers sat idle.
 
 Eligibility is fail-closed on quality:
   * "enabled" must be true.
+  * The provider's "tier" must equal the policy's require_tier (normally
+    "approved"). A "utility" provider is fine for short jobs but never for
+    agentic issue work; "blocked" is always excluded.
   * The provider must carry a measured "score" (agentic coding) at or above
     the policy's "min_agentic_coding_score". A missing/null score excludes it -
     an autonomous agent on an unmeasured model can confidently ship wrong work.
@@ -40,12 +43,17 @@ def rank(seed: str, provider_id: str, weight: int) -> str:
     )
 
 
-def eligibility(provider: dict, min_score: float, excluded: set[str]) -> tuple[bool, str]:
+def eligibility(
+    provider: dict, min_score: float, require_tier: str, excluded: set[str]
+) -> tuple[bool, str]:
     pid = provider.get("id", "<missing-id>")
     if not provider.get("enabled", True):
         return False, "disabled"
     if pid in excluded:
         return False, "excluded by --exclude"
+    tier = provider.get("tier", "blocked")
+    if tier != require_tier:
+        return False, f"tier={tier} (requires {require_tier})"
     score = provider.get("score")
     if score is None:
         return False, "no measured quality score (fail closed)"
@@ -71,15 +79,17 @@ def main() -> int:
     with open(args.config, encoding="utf-8") as fh:
         policy = json.load(fh)
 
-    if "min_agentic_coding_score" not in policy:
+    quality = policy.get("quality_policy", policy)
+    if "min_agentic_coding_score" not in quality:
         print("rotate-providers: policy has no min_agentic_coding_score; refusing to guess", file=sys.stderr)
         return 2
-    min_score = float(policy["min_agentic_coding_score"])
+    min_score = float(quality["min_agentic_coding_score"])
+    require_tier = str(quality.get("require_tier", "approved"))
     excluded = set(args.exclude)
 
     eligible: list[dict] = []
     for provider in policy.get("providers", []):
-        ok, reason = eligibility(provider, min_score, excluded)
+        ok, reason = eligibility(provider, min_score, require_tier, excluded)
         if args.explain:
             print(f"  {provider.get('id', '?'):24} {'ELIGIBLE' if ok else 'skip':8} {reason}", file=sys.stderr)
         if ok:
@@ -88,7 +98,7 @@ def main() -> int:
     if not eligible:
         print(
             "rotate-providers: no eligible providers (every provider is disabled, unscored, "
-            "below min_agentic_coding_score, or excluded)",
+            f"not tier={require_tier}, below min_agentic_coding_score, or excluded)",
             file=sys.stderr,
         )
         return 2

@@ -161,11 +161,15 @@ jobs:
           POLICY=../runner/config/providers.json
           MAX_ATTEMPTS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("max_attempts_per_run", 2))' "$POLICY")
           ATTEMPT_TIMEOUT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("attempt_timeout_seconds", 900))' "$POLICY")
+          PROVIDER_LIST=$(python3 ../runner/scripts/rotate-providers.py \
+            --config "$POLICY" --seed "${GITHUB_RUN_ID}" --explain) || {
+            echo "ERROR: quality gate rejected every provider; refusing to run an unapproved model" | tee -a ../agent-output.txt
+            exit 1
+          }
           PROVIDERS=()
           while IFS= read -r MODEL; do
             [ -n "$MODEL" ] && PROVIDERS+=("$MODEL")
-          done < <(python3 ../runner/scripts/rotate-providers.py \
-            --config "$POLICY" --seed "${GITHUB_RUN_ID}")
+          done <<< "$PROVIDER_LIST"
           while IFS= read -r OPTIONAL_MODEL; do
             [ -n "$OPTIONAL_MODEL" ] && PROVIDERS+=("$OPTIONAL_MODEL")
           done <<< "$RUNNER_OPTIONAL_MODELS"
