@@ -52,6 +52,26 @@
       "note": "Approved by the owner: strong agentic score (79.5; BenchLM agentic 69.9, AA 32, arena coding 1560) and a capable free NIM endpoint. Below Kimi K3 (83.3) as expected."
     },
     {
+      "id": "nvidia-deepseek-v4-1-flash",
+      "model": "nvidia/deepseek-ai/deepseek-v4.1-flash",
+      "tier": "approved",
+      "scored_model_id": "deepseek-v4-1-flash-1017",
+      "score": 70.51,
+      "benchmarks": {
+        "arena_elo_coding": null,
+        "coverage": 5,
+        "release_date": "2026-10-17",
+        "benchlm_agentic": 62.18,
+        "aa_intelligence_index": 32.0,
+        "valsai_swebench_pct": null,
+        "livebench_agentic_coding": 40.9
+      },
+      "weight": 1,
+      "sensitive": false,
+      "enabled": true,
+      "note": "Approved by the owner 2026-10-29. Free NIM endpoint (same NVIDIA key as GLM-5.3). Score 70.5 (1017 build, 5 benchmarks), close to GLM-5.3; rotates with it so one model does not absorb every run."
+    },
+    {
       "id": "dlab-sol",
       "model": "dlab/gpt-5-6-sol",
       "tier": "blocked",

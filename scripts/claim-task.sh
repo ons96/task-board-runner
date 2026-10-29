@@ -77,6 +77,10 @@ for prio_label in "${PRIORITY_ORDER[@]}"; do
     if ! scope_allowed "$row"; then
       continue
     fi
+    # Skip issues that already used up their retries or are blocked.
+    if echo "$row" | jq -e '[.labels[].name] | any(. == "retry-exhausted" or . == "status:blocked" or startswith("blocked-by:"))' >/dev/null; then
+      continue
+    fi
     ISSUE_NUM=$(echo "$row" | jq -r '.number')
     ISSUE_TITLE=$(echo "$row" | jq -r '.title')
     ISSUE_BODY=$(echo "$row" | jq -r '.body')
