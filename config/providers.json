@@ -1,13 +1,13 @@
 {
   "$schema_version": 3,
-  "comment": "Free-LLM provider rotation for the task worker. Two gates, both fail-closed. (1) Human approval: a provider may only run agentic work when tier is 'approved'. The numeric score is advisory because the blended agentic score misranks models: in the 2026-08-16 snapshot gpt-oss-20b scores 61.1 while MiniMax-M3 scores 42.1, which does not match their real agentic-coding behaviour. (2) Numeric floor: the score must still meet min_agentic_coding_score (set to MiniMax-M3's measured 42.1, the stated quality bar). Providers marked 'utility' are fine for short non-agentic jobs (titles, summaries) and are never selected for issue implementation.",
+  "comment": "Free-LLM provider rotation for the task worker. Two gates, both fail-closed. (1) Human approval: a provider may only run agentic work when tier is 'approved'. (2) Numeric floor: the score must still meet min_agentic_coding_score, set to MiniMax-M3's corrected 63.6 (the stated quality bar). The score is now percentile-normalized per benchmark and requires real agentic evidence, so a model with only LiveCodeBench results has no agentic score at all instead of an inflated one. Providers marked 'utility' are fine for short non-agentic jobs (titles, summaries) and are never selected for issue implementation.",
   "quality_policy": {
     "require_tier": "approved",
-    "min_agentic_coding_score": 42.1,
+    "min_agentic_coding_score": 63.6,
     "min_benchmark_coverage": 2,
     "score_source": "llm-leaderboard-aggregate db/models.db -> models_unique.avg_agentic_coding_score",
-    "score_snapshot": "2026-08-16",
-    "note": "Blended percentages mix incompatible benchmarks, so they are necessary but not sufficient. Approval requires a review of the underlying benchmark columns and real-world agentic results."
+    "score_snapshot": "2026-10-29",
+    "note": "Scores are percentiles within each benchmark, weighted toward SWE-rebench. A model needs >=2 components and at least one of SWE-rebench / SWE-bench Verified / LiveBench-agentic to receive an agentic score; the arena-only figure lives in avg_agentic_coding_score_arena_only and never satisfies this floor on its own."
   },
   "max_attempts_per_run": 2,
   "attempt_timeout_seconds": 900,
@@ -17,18 +17,18 @@
       "model": "nvidia/openai/gpt-oss-20b",
       "tier": "utility",
       "scored_model_id": "gpt-oss-20b",
-      "score": 61.08,
+      "score": null,
       "benchmarks": {
         "swe_bench_verified_pct": null,
         "swerebench_pct": null,
         "livecodebench_pct": 77.7,
-        "coverage": 2,
+        "coverage": 1,
         "release_date": "2025-08-06"
       },
       "weight": 3,
       "sensitive": false,
       "enabled": true,
-      "note": "Rejected by the owner for agentic coding: old and unreliable on multi-step work despite the blended score. Allowed only for short utility tasks in a different context."
+      "note": "Rejected by the owner for agentic coding: old and unreliable on multi-step work. Under the corrected scoring it has no agentic score at all (LiveCodeBench-only). Allowed only for short utility tasks in a different context."
     },
     {
       "id": "nvidia-glm-5-3",
@@ -37,13 +37,15 @@
       "scored_model_id": "glm-5-3",
       "score": null,
       "benchmarks": {
+        "arena_elo_coding": 1560.0,
+        "agentic_coding_score_arena_only": 93.7,
         "coverage": 1,
         "release_date": "2026-08-14"
       },
       "weight": 1,
       "sensitive": false,
       "enabled": false,
-      "note": "No measured agentic-coding score in the snapshot. Candidate for approval once scored."
+      "note": "Leads the arena coding board (1560 ELO), but no agentic evaluation exists for it: swebench.com has not accepted a run since Feb 2026 and swe-rebench has not evaluated it. Candidate for approval once an agentic benchmark covers it."
     },
     {
       "id": "dlab-sol",
