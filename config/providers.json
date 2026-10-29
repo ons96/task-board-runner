@@ -1,13 +1,13 @@
 {
   "$schema_version": 3,
-  "comment": "Free-LLM provider rotation for the task worker. Two gates, both fail-closed. (1) Human approval: a provider may only run agentic work when tier is 'approved'. (2) Numeric floor: the score must still meet min_agentic_coding_score, set to MiniMax-M3's corrected 63.6 (the stated quality bar). The score is now percentile-normalized per benchmark and requires real agentic evidence, so a model with only LiveCodeBench results has no agentic score at all instead of an inflated one. Providers marked 'utility' are fine for short non-agentic jobs (titles, summaries) and are never selected for issue implementation.",
+  "comment": "Free-LLM provider rotation for the task worker. Two gates, both fail-closed. (1) Human approval: a provider may only run agentic work when tier is 'approved'. (2) Numeric floor: min_agentic_coding_score is MiniMax-M3's measured 47.4, the owner's stated quality bar. Providers marked 'utility' are fine for short non-agentic jobs (titles, summaries) and are never selected for issue implementation.",
   "quality_policy": {
     "require_tier": "approved",
-    "min_agentic_coding_score": 63.6,
+    "min_agentic_coding_score": 47.4,
     "min_benchmark_coverage": 2,
     "score_source": "llm-leaderboard-aggregate db/models.db -> models_unique.avg_agentic_coding_score",
     "score_snapshot": "2026-10-29",
-    "note": "Scores are percentiles within each benchmark, weighted toward SWE-rebench. A model needs >=2 components and at least one of SWE-rebench / SWE-bench Verified / LiveBench-agentic to receive an agentic score; the arena-only figure lives in avg_agentic_coding_score_arena_only and never satisfies this floor on its own."
+    "note": "Scores are percentiles within each benchmark, weighted toward current agentic leaderboards (BenchLM agentic 0.30, SWE-rebench 0.20, AA Intelligence 0.15, SWE-bench Verified 0.10). A model needs >=2 components and at least one agentic evaluation to receive a score at all; avg_agentic_coding_score_arena_only never satisfies this floor."
   },
   "max_attempts_per_run": 2,
   "attempt_timeout_seconds": 900,
@@ -17,35 +17,37 @@
       "model": "nvidia/openai/gpt-oss-20b",
       "tier": "utility",
       "scored_model_id": "gpt-oss-20b",
-      "score": null,
+      "score": 26.8,
       "benchmarks": {
         "swe_bench_verified_pct": null,
         "swerebench_pct": null,
         "livecodebench_pct": 77.7,
-        "coverage": 1,
-        "release_date": "2025-08-06"
+        "coverage": 3,
+        "release_date": "2025-08-06",
+        "benchlm_agentic": 23.96
       },
       "weight": 3,
       "sensitive": false,
       "enabled": true,
-      "note": "Rejected by the owner for agentic coding: old and unreliable on multi-step work. Under the corrected scoring it has no agentic score at all (LiveCodeBench-only). Allowed only for short utility tasks in a different context."
+      "note": "Rejected by the owner for agentic coding: old and unreliable on multi-step work. Now scored honestly (BenchLM agentic 24.0, composite 26.8) instead of 61.1 under the old raw-average formula."
     },
     {
       "id": "nvidia-glm-5-3",
       "model": "nvidia/z-ai/glm-5.3",
       "tier": "blocked",
       "scored_model_id": "glm-5-3",
-      "score": null,
+      "score": 79.5,
       "benchmarks": {
         "arena_elo_coding": 1560.0,
-        "agentic_coding_score_arena_only": 93.7,
-        "coverage": 1,
-        "release_date": "2026-08-14"
+        "coverage": 4,
+        "release_date": "2026-08-14",
+        "benchlm_agentic": 69.94,
+        "aa_intelligence_index": 32.0
       },
       "weight": 1,
       "sensitive": false,
       "enabled": false,
-      "note": "Leads the arena coding board (1560 ELO), but no agentic evaluation exists for it: swebench.com has not accepted a run since Feb 2026 and swe-rebench has not evaluated it. Candidate for approval once an agentic benchmark covers it."
+      "note": "Meets the numeric floor (79.5). Left at tier 'blocked' only because a human has not approved it yet; flip tier to 'approved' to let it run agentic work."
     },
     {
       "id": "dlab-sol",
