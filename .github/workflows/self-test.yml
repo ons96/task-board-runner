@@ -61,6 +61,23 @@ jobs:
       - name: Merge policy
         run: bash scripts/merge-policy.sh --self-test
 
+      - name: Approved providers exist in runner config
+        run: |
+          python3 - <<'PY'
+          import json
+          cfg = json.load(open('.github/runner-config.json'))['provider']
+          pol = json.load(open('config/providers.json'))['providers']
+          bad = []
+          for p in pol:
+              if not p.get('enabled') or p.get('tier') != 'approved':
+                  continue
+              prov, _, model = p['model'].partition('/')
+              if model not in cfg.get(prov, {}).get('models', {}):
+                  bad.append(p['model'])
+          assert not bad, f"approved providers missing from runner-config.json: {bad}"
+          print('providers OK')
+          PY
+
       - name: Workflow YAML validation
         run: |
           python3 -c "import yaml,glob; [yaml.safe_load(open(f)) for f in glob.glob('.github/workflows/*.yml')]; print('YAML OK')"
