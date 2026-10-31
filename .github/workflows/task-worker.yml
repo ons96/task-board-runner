@@ -166,8 +166,12 @@ jobs:
           POLICY=../runner/config/providers.json
           MAX_ATTEMPTS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("max_attempts_per_run", 2))' "$POLICY")
           ATTEMPT_TIMEOUT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("attempt_timeout_seconds", 900))' "$POLICY")
+          # Live agentic scores (daily refresh). Fetch failure = empty file = config scores used.
+          gh api -H "Accept: application/vnd.github.raw" \
+            repos/ons96/llm-leaderboard-aggregate/contents/leaderboards/agentic_coding_leaderboard.csv \
+            > ../agentic_scores.csv 2>/dev/null || echo "WARN: leaderboard fetch failed; using config scores"
           PROVIDER_LIST=$(python3 ../runner/scripts/rotate-providers.py \
-            --config "$POLICY" --seed "${GITHUB_RUN_ID}" --explain) || {
+            --config "$POLICY" --seed "${GITHUB_RUN_ID}" --scores ../agentic_scores.csv --explain) || {
             echo "ERROR: quality gate rejected every provider; refusing to run an unapproved model" | tee -a ../agent-output.txt
             exit 1
           }

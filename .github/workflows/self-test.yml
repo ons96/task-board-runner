@@ -78,6 +78,15 @@ jobs:
           print('providers OK')
           PY
 
+      - name: Leaderboard scores override config
+        run: |
+          printf 'rank,model_id,avg_agentic_coding_score,benchmark_coverage\n1,deepseek-v4-1-flash,10,6\n' > /tmp/s.csv
+          out=$(python3 scripts/rotate-providers.py --config config/providers.json --seed t --scores /tmp/s.csv --explain 2>&1 >/dev/null)
+          echo "$out"
+          echo "$out" | grep -q 'nvidia-deepseek-v4-1-flash.*score 10 < minimum' || { echo "FAIL: CSV score not applied"; exit 1; }
+          python3 scripts/rotate-providers.py --config config/providers.json --seed t --scores /nonexistent.csv >/dev/null
+          echo 'scores OK'
+
       - name: Workflow YAML validation
         run: |
           python3 -c "import yaml,glob; [yaml.safe_load(open(f)) for f in glob.glob('.github/workflows/*.yml')]; print('YAML OK')"
