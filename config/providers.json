@@ -13,6 +13,41 @@
   "attempt_timeout_seconds": 900,
   "providers": [
     {
+      "id": "nvidia-minimax-m3-1-flash",
+      "model": "nvidia/minimaxai/minimax-m3.1-flash",
+      "scored_model_id": "minimax-m3-1-flash",
+      "score": null,
+      "benchmarks": {
+        "coverage": 0,
+        "arena_elo_coding": 1539,
+        "aa_intelligence_index": 43.0
+      },
+      "priority": 0,
+      "tier": "approved",
+      "weight": 1,
+      "sensitive": false,
+      "enabled": true,
+      "owner_pinned": true,
+      "note": "Owner-pinned primary 2026-10-31 (owner chose MiniMax M3.1 Flash as runner model). No measured agentic score yet; owner_pinned bypasses the score floor. NIM probe 200 in 1.9s."
+    },
+    {
+      "id": "nvidia-nemotron-3-ultra",
+      "model": "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
+      "scored_model_id": "nemotron-3-ultra-550b-a55b",
+      "score": null,
+      "benchmarks": {
+        "coverage": 0,
+        "arena_elo_coding": 1452
+      },
+      "priority": 1,
+      "tier": "approved",
+      "weight": 1,
+      "sensitive": false,
+      "enabled": true,
+      "owner_pinned": true,
+      "note": "Owner-approved fallback 2026-10-31 for the MiniMax primary. NIM probe 200 in 2.4s. owner_pinned bypasses the score floor."
+    },
+    {
       "id": "nvidia-gpt-oss-20b",
       "model": "nvidia/openai/gpt-oss-20b",
       "tier": "utility",
@@ -69,7 +104,7 @@
       "weight": 1,
       "sensitive": false,
       "enabled": true,
-      "note": "Approved by the owner 2026-10-29. Free NIM endpoint (same NVIDIA key as GLM-5.3). Score 70.5 (1017 build, 5 benchmarks), close to GLM-5.3; rotates with it so one model does not absorb every run."
+      "note": "Approved by the owner 2026-10-29. Free NIM endpoint (same NVIDIA key as GLM-5.3). Score 70.5 (1017 build, 5 benchmarks), close to GLM-5.3; rotates with it so one model does not absorb every run. 2026-10-31: NIM endpoint hangs (40s+ no response); kept enabled but ordered after the pinned models."
     },
     {
       "id": "dlab-sol",
