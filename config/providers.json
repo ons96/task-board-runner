@@ -48,8 +48,8 @@
       },
       "weight": 1,
       "sensitive": false,
-      "enabled": true,
-      "note": "Approved by the owner: strong agentic score (79.5; BenchLM agentic 69.9, AA 32, arena coding 1560) and a capable free NIM endpoint. Below Kimi K3 (83.3) as expected."
+      "enabled": false,
+      "note": "Approved by the owner: strong agentic score (79.5; BenchLM agentic 69.9, AA 32, arena coding 1560) and a capable free NIM endpoint. Below Kimi K3 (83.3) as expected. DISABLED 2026-10-31: NIM returns HTTP 410 Gone, model end of life 2026-10-28T08:00:00Z."
     },
     {
       "id": "nvidia-deepseek-v4-1-flash",
