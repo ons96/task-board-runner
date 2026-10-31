@@ -128,8 +128,10 @@ jobs:
       - name: Install opencode
         run: |
           curl -fsSL https://opencode.ai/install | bash
+          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          opencode --version || true
+          export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+          opencode --version
 
       - name: Run opencode on claimed issue
         working-directory: workspace
@@ -143,11 +145,14 @@ jobs:
           OPENCODE_DISABLE_DEFAULT_PLUGINS: '1'
           OPENCODE_DISABLE_EXTERNAL_SKILLS: '1'
           OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1'
+          # Issue text goes through env, never ${{ }} inlining (shell injection).
+          TASK_TITLE: ${{ steps.task.outputs.title }}
+          TASK_BODY: ${{ steps.task.outputs.body }}
         run: |
-          PROMPT="You are an autonomous coding agent. Issue #${{ inputs.issue_number }} from the task board: ${{ steps.task.outputs.title }}
+          PROMPT="You are an autonomous coding agent. Issue #${{ inputs.issue_number }} from the task board: ${TASK_TITLE}
 
           Issue body:
-          ${{ steps.task.outputs.body }}
+          ${TASK_BODY}
 
           Implement the requested work in this repo. Follow existing conventions. Keep diffs minimal. Do NOT push or open a PR — the workflow pushes and opens the PR.
           Work in branch work/${{ inputs.issue_number }} and continue from any partial commits already on it.
@@ -214,6 +219,8 @@ jobs:
       - name: Check for changes
         id: changes
         working-directory: workspace
+        env:
+          TASK_TITLE: ${{ steps.task.outputs.title }}
         run: |
           AHEAD=0
           if git rev-parse --verify "origin/work/${{ inputs.issue_number }}" >/dev/null 2>&1; then
@@ -224,7 +231,7 @@ jobs:
           else
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
             git add -A
-            git diff --cached --quiet || git commit -m "feat(#${{ inputs.issue_number }}): agent implementation for ${{ steps.task.outputs.title }}"
+            git diff --cached --quiet || git commit -m "feat(#${{ inputs.issue_number }}): agent implementation for ${TASK_TITLE}"
           fi
 
       # Verification gate (task-board #934, ported from task-board-loop
@@ -265,11 +272,12 @@ jobs:
         working-directory: workspace
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
+          TASK_TITLE: ${{ steps.task.outputs.title }}
         run: |
           git push "https://x-access-token:${GH_TOKEN}@github.com/ons96/${{ inputs.project }}.git" \
             "work/${{ inputs.issue_number }}"
           PR_URL=$(gh pr create --repo "ons96/${{ inputs.project }}" \
-            --title "[#${{ inputs.issue_number }}] Agent work: ${{ steps.task.outputs.title }}" \
+            --title "[#${{ inputs.issue_number }}] Agent work: ${TASK_TITLE}" \
             --body "Automated implementation by task-board-runner (run ${{ github.run_id }})." \
             --base main --head "work/${{ inputs.issue_number }}" --draft 2>&1) || true
           echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
@@ -315,6 +323,7 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           LOCK_LABEL: ${{ inputs.lock_label }}
           MAX_RETRIES: ${{ vars.RETRY_BUDGET_MAX }}
+          VERIFY_REASON: ${{ steps.verify.outputs.verify_reason || 'unknown' }}
         run: |
           if [ "${{ steps.verify.outputs.verify_result || 'fail' }}" = "pass" ] && [ "${{ job.status }}" = "success" ]; then
             exit 0
@@ -351,14 +360,13 @@ jobs:
           elif [ "${{ job.status }}" != "success" ]; then
             REASON="job failed (${{ job.status }})"
           else
-            # shellcheck disable=SC2016
-            REASON='verification failed: ${{ steps.verify.outputs.verify_reason }}'
+            REASON="verification failed: ${VERIFY_REASON}"
           fi
           # Canonical failure class (#936): one stable label + one-line cause.
           # The classifier only ever emits the class name, never log contents.
           FAIL_CLASS=$(bash runner/scripts/failure-taxonomy.sh --classify \
             --log agent-output.txt \
-            --verify-reason "${{ steps.verify.outputs.verify_reason || 'unknown' }}" \
+            --verify-reason "$VERIFY_REASON" \
             --job-status "${{ job.status }}" \
             --has-changes "${{ steps.changes.outputs.has_changes || 'false' }}" \
             2>/dev/null || true)

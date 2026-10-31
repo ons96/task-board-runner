@@ -2,6 +2,8 @@
 
 Public GitHub Actions runner for [`ons96/task-board`](https://github.com/ons96/task-board). Claims issues, runs [opencode](https://opencode.ai) with free-tier LLM providers, opens PRs. Free (unlimited public Actions minutes).
 
+> **This is the active task-board runner.** Use this repo for free-model task-board work on GitHub runners. `ons96/autodev` + `ons96/autodev-sandbox` are a separate, private (2000 min/month) experiment with a self-hosted VPS-40 runner; do not use them for task-board work.
+
 ## Why public
 
 Private repos get 2000 Actions minutes/month; public repos get unlimited. The runner needs no secrets from `task-board` itself — it only reads OPEN issues and claims via `gh` CLI using a PAT hosted as a secret here.
