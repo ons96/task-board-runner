@@ -58,6 +58,9 @@ def eligibility(
     tier = provider.get("tier", "blocked")
     if tier != require_tier:
         return False, f"tier={tier} (requires {require_tier})"
+    if provider.get("owner_pinned"):
+        # ponytail: owner explicitly chose this model; score/coverage floors are for auto-picked ones
+        return True, f"owner_pinned (score {provider.get('score')})"
     coverage = int((provider.get("benchmarks") or {}).get("coverage", 0))
     if coverage < min_coverage:
         return False, f"benchmark coverage {coverage} < {min_coverage}"
@@ -114,6 +117,7 @@ def main() -> int:
     eligible.sort(
         key=lambda p: (
             1 if p.get("sensitive") else 0,
+            int(p.get("priority", 100)),
             rank(args.seed, p["id"], int(p.get("weight", 1))),
         )
     )
