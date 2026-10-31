@@ -33,7 +33,7 @@
     {
       "id": "nvidia-nemotron-3-ultra",
       "model": "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
-      "scored_model_id": "nemotron-3-ultra-550b-a55b",
+      "scored_model_id": "nemotron-3-ultra",
       "score": null,
       "benchmarks": {
         "coverage": 0,
@@ -90,7 +90,7 @@
       "id": "nvidia-deepseek-v4-1-flash",
       "model": "nvidia/deepseek-ai/deepseek-v4.1-flash",
       "tier": "approved",
-      "scored_model_id": "deepseek-v4-1-flash-1017",
+      "scored_model_id": "deepseek-v4-1-flash",
       "score": 70.51,
       "benchmarks": {
         "arena_elo_coding": null,

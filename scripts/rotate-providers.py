@@ -22,17 +22,44 @@ Ordering:
     --seed, so consecutive runs start on different providers while a run stays
     reproducible from its seed.
 
+Scores: with --scores <agentic_coding_leaderboard.csv> each provider's score and
+coverage are taken from the leaderboard row whose model_id == scored_model_id,
+so the gate follows the daily benchmark refresh instead of hand-copied numbers.
+
 Usage:
   rotate-providers.py --config config/providers.json --seed "$GITHUB_RUN_ID"
+  rotate-providers.py ... --scores agentic_coding_leaderboard.csv
   rotate-providers.py ... --explain
   rotate-providers.py ... --limit 1 --exclude nvidia-gpt-oss-20b
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import sys
+
+
+def load_scores(path: str) -> dict[str, tuple[float, int]]:
+    """model_id -> (avg_agentic_coding_score, benchmark_coverage) from the leaderboard CSV."""
+    out: dict[str, tuple[float, int]] = {}
+    with open(path, encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            try:
+                out[row["model_id"]] = (float(row["avg_agentic_coding_score"]), int(row["benchmark_coverage"] or 0))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return out
+
+
+def apply_scores(providers: list[dict], scores: dict[str, tuple[float, int]]) -> None:
+    """Overwrite hand-copied score/coverage with live leaderboard values where the model is listed."""
+    for p in providers:
+        hit = scores.get(p.get("scored_model_id", ""))
+        if hit:
+            p["score"] = hit[0]
+            p.setdefault("benchmarks", {})["coverage"] = hit[1]
 
 
 def rank(seed: str, provider_id: str, weight: int) -> str:
@@ -84,6 +111,7 @@ def main() -> int:
     ap.add_argument("--exclude", action="append", default=[], help="Provider id already tried this run")
     ap.add_argument("--format", choices=["model", "id", "json"], default="model")
     ap.add_argument("--explain", action="store_true", help="Print eligibility reasons to stderr")
+    ap.add_argument("--scores", help="Leaderboard CSV (agentic_coding_leaderboard.csv); overrides config scores")
     args = ap.parse_args()
 
     with open(args.config, encoding="utf-8") as fh:
@@ -97,6 +125,12 @@ def main() -> int:
     require_tier = str(quality.get("require_tier", "approved"))
     min_coverage = int(quality.get("min_benchmark_coverage", 0))
     excluded = set(args.exclude)
+    if args.scores:
+        try:
+            apply_scores(policy.get("providers", []), load_scores(args.scores))
+        except OSError as exc:
+            # ponytail: missing CSV keeps the config's hand-copied scores, gate still applies
+            print(f"rotate-providers: scores file unreadable ({exc}); using config scores", file=sys.stderr)
 
     eligible: list[dict] = []
     for provider in policy.get("providers", []):
