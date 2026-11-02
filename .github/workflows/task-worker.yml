@@ -321,11 +321,12 @@ jobs:
           gh issue close "$ISSUE_NUMBER" -R ons96/task-board || true
 
       - name: Salvage partial work
-        if: failure()
+        if: failure() && hashFiles('workspace/.git') != ''
         working-directory: workspace
         env:
           GH_TOKEN: ${{ secrets.TASK_BOARD_PAT }}
         run: |
+          [ -d .git ] || exit 0
           git add -A
           git diff --cached --quiet || git commit -m "wip(#${{ inputs.issue_number }}): partial progress, run ${{ github.run_id }}" || true
           git push "https://x-access-token:${GH_TOKEN}@github.com/ons96/${{ inputs.project }}.git" \

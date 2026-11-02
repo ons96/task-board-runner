@@ -19,6 +19,21 @@ WORKER_ID=""
 HEARTBEAT_INTERVAL="${HEARTBEAT_INTERVAL:-300}"
 TASK_ALLOWED_SCOPES="${TASK_ALLOWED_SCOPES:-cross-device}"
 
+# A project label must name a repo that exists. Without this preflight the
+# claim is spent, the worker dies at "Checkout target repo" with
+# "Repository not found", and the salvage step fails on a missing workspace.
+# Observed 2026-11-02 on #1241 (project:oci-payg, no such repo).
+repo_exists() {
+  gh repo view "ons96/$1" --json name >/dev/null 2>&1
+}
+
+# Undo a claim taken before a preflight rejection.
+release_claim() {
+  gh issue edit "$1" -R "$TASK_BOARD_REPO" \
+    --remove-label "status:in_progress" --add-label "status:new" \
+    --remove-label "$2" >/dev/null 2>&1 || true
+}
+
 scope_allowed() {
   local row="$1"
   local issue_scope
@@ -37,6 +52,18 @@ scope_allowed() {
 
   return 1
 }
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  tmp=$(mktemp -d)
+  mkdir -p "$tmp/bin"
+  printf '#!/usr/bin/env bash\n[[ "$3" == "ons96/exists" ]] && exit 0\nexit 1\n' > "$tmp/bin/gh"
+  chmod +x "$tmp/bin/gh"
+  PATH="$tmp/bin:$PATH"
+  repo_exists exists || { echo "FAIL: existing repo reported missing" >&2; exit 1; }
+  repo_exists nope && { echo "FAIL: missing repo reported present" >&2; exit 1; }
+  echo "claim-task self-test OK"
+  exit 0
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -113,9 +140,12 @@ for prio_label in "${PRIORITY_ORDER[@]}"; do
     done
     if [[ "$PROJECT" == "unknown" ]]; then
       echo "Issue #$ISSUE_NUM has no project label, skipping" >&2
-      gh issue edit "$ISSUE_NUM" -R "$TASK_BOARD_REPO" \
-        --remove-label "status:in_progress" --add-label "status:new" \
-        --remove-label "$LOCK_LABEL" >/dev/null 2>&1 || true
+      release_claim "$ISSUE_NUM" "$LOCK_LABEL"
+      continue
+    fi
+    if ! repo_exists "$PROJECT"; then
+      echo "Issue #$ISSUE_NUM project '$PROJECT' has no repo ons96/$PROJECT, skipping" >&2
+      release_claim "$ISSUE_NUM" "$LOCK_LABEL"
       continue
     fi
 
