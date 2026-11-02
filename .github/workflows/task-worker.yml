@@ -166,6 +166,13 @@ jobs:
           POLICY=../runner/config/providers.json
           MAX_ATTEMPTS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("max_attempts_per_run", 2))' "$POLICY")
           ATTEMPT_TIMEOUT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("attempt_timeout_seconds", 900))' "$POLICY")
+          # Run 41382154101 spent all 900s reading docs and curl-ing provider
+          # catalogs, never edited a file, and released the task as no_change.
+          # State the budget in the prompt; the model cannot see a clock.
+          PROMPT=$(printf '%s\n\n%s\n%s\n%s' "$PROMPT" \
+            "Hard time budget: $((ATTEMPT_TIMEOUT / 60)) minutes for this attempt, then the process is killed." \
+            "Read only what you must edit plus its tests; do NOT survey the repo or fetch provider docs." \
+            "Start editing within the first 5 minutes. A run that ends with no diff counts as a failure.")
           # Live agentic scores (daily refresh). Fetch failure = empty file = config scores used.
           gh api -H "Accept: application/vnd.github.raw" \
             repos/ons96/llm-leaderboard-aggregate/contents/leaderboards/agentic_coding_leaderboard.csv \
