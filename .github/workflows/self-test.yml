@@ -40,6 +40,9 @@ jobs:
           bash -n scripts/merge-policy.sh
           echo "shell syntax OK"
 
+      - name: Claim-task preflight
+        run: bash scripts/claim-task.sh --self-test
+
       - name: Provider manifest validation
         run: python3 runner/scripts/provider-manifest.py --self-test
 
