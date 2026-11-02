@@ -104,7 +104,7 @@
       "weight": 1,
       "sensitive": false,
       "enabled": true,
-      "note": "Approved by the owner 2026-10-29. Free NIM endpoint (same NVIDIA key as GLM-5.3). Score 70.5 (1017 build, 5 benchmarks), close to GLM-5.3; rotates with it so one model does not absorb every run. 2026-10-31: NIM endpoint hangs (40s+ no response); kept enabled but ordered after the pinned models."
+      "note": "Approved by the owner 2026-10-29. Free NIM endpoint (same NVIDIA key as GLM-5.3). Score 70.5 (1017 build, 5 benchmarks), close to GLM-5.3; rotates with it so one model does not absorb every run. Verified live 2026-11-02."
     },
     {
       "id": "dlab-sol",
