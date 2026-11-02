@@ -190,9 +190,13 @@ jobs:
             echo "Attempting provider: $MODEL" | tee -a ../agent-output.txt
             : > ../provider-attempt.txt
             set +e
-            timeout "$ATTEMPT_TIMEOUT" opencode run --pure --model "$MODEL" "$PROMPT" > /tmp/provider-attempt.txt 2>&1
+            # -k 60: SIGKILL 60s after SIGTERM. A wedged opencode ignored plain
+            # timeout's SIGTERM on run 41382154101 and held the job past budget.
+            ATTEMPT_START=$(date +%s)
+            timeout -k 60 "$ATTEMPT_TIMEOUT" opencode run --pure --model "$MODEL" "$PROMPT" > /tmp/provider-attempt.txt 2>&1
             STATUS=$?
             set -e
+            echo "attempt_elapsed_seconds=$(( $(date +%s) - ATTEMPT_START )) model=$MODEL status=$STATUS" | tee -a ../agent-output.txt
             cat /tmp/provider-attempt.txt | tee -a ../agent-output.txt
             if [ "$STATUS" -eq 0 ]; then
               succeeded=1
