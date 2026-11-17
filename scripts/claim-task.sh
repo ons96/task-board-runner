@@ -34,6 +34,14 @@ release_claim() {
     --remove-label "$2" >/dev/null 2>&1 || true
 }
 
+# Briefs that name a laptop-only path cannot be executed on a runner: the
+# workspace is a fresh checkout of the project repo, so ~/CodingProjects/... and
+# /home/<user>/... do not exist there. Observed 2026-11-17 on #833 and #840: the
+# agent hit "File not found", produced nothing, and the run still went green.
+host_path_refs() {
+  printf '%s' "$1" | grep -oE '(~/(CodingProjects|\.[a-z]+)/[A-Za-z0-9._/-]+|/home/[a-z]+/[A-Za-z0-9._/-]+|/Users/[A-Za-z]+/[A-Za-z0-9._/-]+)' 2>/dev/null | sort -u | head -5 || true
+}
+
 scope_allowed() {
   local row="$1"
   local issue_scope
@@ -61,6 +69,13 @@ if [[ "${1:-}" == "--self-test" ]]; then
   PATH="$tmp/bin:$PATH"
   repo_exists exists || { echo "FAIL: existing repo reported missing" >&2; exit 1; }
   repo_exists nope && { echo "FAIL: missing repo reported present" >&2; exit 1; }
+  # Host-path detector (#1312)
+  HITS=$(host_path_refs "edit ~/CodingProjects/scripts/sync-opencode-globals.sh please")
+  [ -n "$HITS" ] || { echo "FAIL: host path not detected" >&2; exit 1; }
+  HITS=$(host_path_refs "update scripts/install.sh in this repo")
+  [ -z "$HITS" ] || { echo "FAIL: in-repo path falsely flagged: $HITS" >&2; exit 1; }
+  HITS=$(host_path_refs "/home/osees/CodingProjects/vps/idle_guard.py")
+  [ -n "$HITS" ] || { echo "FAIL: absolute host path not detected" >&2; exit 1; }
   echo "claim-task self-test OK"
   exit 0
 fi
@@ -148,6 +163,25 @@ for prio_label in "${PRIORITY_ORDER[@]}"; do
       release_claim "$ISSUE_NUM" "$LOCK_LABEL"
       continue
     fi
+    # Flag briefs that name machine-local paths (#1312). Refusing outright would
+    # drop ~19% of the queue, including work that legitimately needs a workstation,
+    # so annotate the issue and let the worker decide. Measured 2026-11-17: 21 of
+    # 112 open issues match this pattern.
+    HOST_PATHS=$(host_path_refs "$ISSUE_BODY")
+    if [[ -n "$HOST_PATHS" ]]; then
+      echo "Issue #$ISSUE_NUM brief names host-only paths (annotating):" >&2
+      echo "$HOST_PATHS" >&2
+      gh issue comment "$ISSUE_NUM" -R "$TASK_BOARD_REPO" --body "$(cat <<EOF
+Worker notice: this brief names path(s) outside the checked-out repo.
+
+    $HOST_PATHS
+
+The worker only has ons96/$PROJECT under workspace/, so those paths do not
+exist there. If the work genuinely needs them, the file must be moved into the
+repo first; otherwise expect a partial or no-change run.
+EOF
+)" >/dev/null 2>&1 || true
+    fi
 
     # Timestamped lease (#937): record an unambiguous acquisition marker so
     # sweeps free half-alive workers by lease age instead of guessing from
@@ -166,7 +200,8 @@ for prio_label in "${PRIORITY_ORDER[@]}"; do
     echo "$row" | jq -c \
       --arg worker "$WORKER_ID" \
       --arg project "$PROJECT" \
-      '. + {worker: $worker, project: $project}'
+      --arg host_paths "${HOST_PATHS:-}" \
+      '. + {worker: $worker, project: $project, host_paths: $host_paths}'
 
     exit 0
     INDEX=$((INDEX + 1))
