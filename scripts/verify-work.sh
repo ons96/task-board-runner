@@ -60,8 +60,12 @@ verify() {
   content="$(git -C "$WT" diff --name-only "$BASE" -- 2>/dev/null; git -C "$WT" ls-files --others --exclude-standard 2>/dev/null)"
   { [ -n "$content" ] || [ "$commits" -gt 0 ]; } || { fail "no work product (no diff, no untracked, no new commits)"; return 1; }
   if [ -f "$WT/package.json" ]; then
+    command -v npm >/dev/null 2>&1 || { fail "npm missing, tests not run"; return 1; }
     (cd "$WT" && npm test -- --silent) || { fail "tests failed"; return 1; }
   elif [ -f "$WT/pyproject.toml" ]; then
+    # A missing runner is an environment fault, not a test failure. Report it
+    # distinctly so the failure taxonomy can label it infrastructure.
+    command -v pytest >/dev/null 2>&1 || { fail "pytest missing, tests not run"; return 1; }
     (cd "$WT" && pytest -q) || { fail "python tests failed"; return 1; }
   fi
   echo "OK" > "$REASON_FILE"
