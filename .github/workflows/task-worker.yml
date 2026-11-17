@@ -125,6 +125,16 @@ jobs:
           BASE=$(git rev-parse HEAD)
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
 
+      - name: Install test tooling
+        run: |
+          # The verify gate runs `pytest` when the target repo has a
+          # pyproject.toml. Without this step pytest is simply absent and the
+          # gate reports "python tests failed" for a run whose tests never ran
+          # (run 43925498506).
+          python3 -m pip install --quiet --break-system-packages --user pytest
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          pytest --version
+
       - name: Install opencode
         run: |
           curl -fsSL https://opencode.ai/install | bash
@@ -202,10 +212,11 @@ jobs:
         id: changes
         working-directory: workspace
         run: |
-          AHEAD=0
-          if git rev-parse --verify "origin/work/${{ inputs.issue_number }}" >/dev/null 2>&1; then
-            AHEAD=$(git rev-list --count "origin/work/${{ inputs.issue_number }}..HEAD" 2>/dev/null || echo 0)
-          fi
+          # Count commits against the recorded baseline, not against the remote
+          # work branch. On a first run origin/work/N does not exist, so the old
+          # check saw AHEAD=0 and reported "no changes" even after the agent had
+          # committed real work (run 43925498506 lost a 9-file commit this way).
+          AHEAD=$(git rev-list --count "${{ steps.baseline.outputs.base }}..HEAD" 2>/dev/null || echo 0)
           if git diff --quiet && git diff --cached --quiet && [ "$AHEAD" = "0" ]; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
@@ -333,13 +344,15 @@ jobs:
             gh issue edit "$ISSUE_NUMBER" -R ons96/task-board --remove-label "$OLD_LEASE" >/dev/null 2>&1 || true
           done
           REASON="unknown"
-          if [ "${{ steps.changes.outputs.has_changes || 'false' }}" != "true" ]; then
-            REASON="no changes"
+          # Verify verdict first: a run can both have changes and fail
+          # verification, and "no changes" would then be a lie (run 43925498506
+          # reported "no changes" for a run whose real failure was pytest).
+          if [ "${{ steps.verify.outputs.verify_result || 'fail' }}" != "pass" ]; then
+            REASON="verification failed: ${{ steps.verify.outputs.verify_reason }}"
           elif [ "${{ job.status }}" != "success" ]; then
             REASON="job failed (${{ job.status }})"
-          else
-            # shellcheck disable=SC2016
-            REASON='verification failed: ${{ steps.verify.outputs.verify_reason }}'
+          elif [ "${{ steps.changes.outputs.has_changes || 'false' }}" != "true" ]; then
+            REASON="no changes"
           fi
           # Canonical failure class (#936): one stable label + one-line cause.
           # The classifier only ever emits the class name, never log contents.
